@@ -23,6 +23,23 @@ import java.util.List;
 import javax.annotation.Nullable;
 
 /**
+ * 事件监听器。对外提供该类，使用者通过实现该类的相关方法监听HTTP Call的数量、大小和持续时间。
+ * 所有start/connect/acquire事件都有一一对应的end/release事件，要么成功（参数非空），要么失败（异常非空）。
+ * 每个事件对的第一个参数用于在并行或是重复的情况下匹配相对应的事件。
+ *
+ * 嵌套如下：
+ *  Call -> (dns -> connect -> secure connect) -> request events
+ *  Call -> (connection acquire/release)
+ *
+ * 有序请求事件：
+ *  requestHeaders -> requestBody -> responseHeaders -> responseBody
+ *
+ * 由于可以复用连接，因此dns相关事件和连接相关事件可能不会在Call中存在，或是可能在失败重试时重复调用，甚至在happy eyeballs情况下并行。
+ * 在重定向或使用HTTPS时可能会导致额外的连接和请求事件。
+ *
+ * 所有的事件方法必须快速执行，不能加锁，不能抛出异常，不能尝试改变事件参数或重新进入实例。
+ * 任何IO写文件操作或是联网操作都应该异步执行。
+ *
  * Listener for metrics events. Extend this class to monitor the quantity, size, and duration of
  * your application's HTTP calls.
  *
