@@ -1,4 +1,5 @@
 .classpath
+.kotlin
 .project
 .settings
 .gradle
@@ -20,6 +21,7 @@ local.properties
 *.iml
 *.ipr
 *.iws
+*.log
 classes
 
 obj
@@ -27,7 +29,12 @@ obj
 .DS_Store
 
 # Special Mkdocs files
-docs/4.x
+docs/5.x
 docs/changelog.md
 docs/contributing.md
 docs/index.md
+
+# jenv
+/.java-version
+/site/
+/docs/changelogs/changelog.md

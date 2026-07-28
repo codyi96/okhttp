@@ -15,11 +15,9 @@
  */
 package mockwebserver3.junit4
 
+import java.io.IOException
 import mockwebserver3.MockWebServer
 import org.junit.rules.ExternalResource
-import java.io.IOException
-import java.util.logging.Level
-import java.util.logging.Logger
 
 /**
  * Runs MockWebServer for the duration of a single test method.
@@ -27,13 +25,13 @@ import java.util.logging.Logger
  * In Java JUnit 4 tests (ie. tests annotated `@org.junit.Test`), use this by defining a field with
  * the `@Rule` annotation:
  *
- * ```
+ * ```java
  * @Rule public final MockWebServerRule serverRule = new MockWebServerRule();
  * ```
  *
  * For Kotlin the `@JvmField` annotation is also necessary:
  *
- * ```
+ * ```kotlin
  * @JvmField @Rule val serverRule = MockWebServerRule()
  * ```
  */
@@ -49,14 +47,6 @@ class MockWebServerRule : ExternalResource() {
   }
 
   override fun after() {
-    try {
-      server.shutdown()
-    } catch (e: IOException) {
-      logger.log(Level.WARNING, "MockWebServer shutdown failed", e)
-    }
-  }
-
-  companion object {
-    private val logger = Logger.getLogger(MockWebServerRule::class.java.name)
+    server.close()
   }
 }

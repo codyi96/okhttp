@@ -6,31 +6,18 @@ This module integrates mockwebserver3.MockWebServer with JUnit 5.
 To use, first add this library as a test dependency:
 
 ```
-testRuntimeOnly("com.squareup.okhttp3:mockwebserver3-junit5:4.9.1")
+testImplementation("com.squareup.okhttp3:mockwebserver3-junit5:5.4.0")
 ```
 
-Then in tests annotated `@org.junit.jupiter.api.Test`, you may add a [MockWebServer] as a test
-method parameter. It will be shut down automatically after the test runs.
-
-```
-class MyTest {
-  @Test
-  void test(MockWebServer server) {
-    ...
-  }
-}
-```
-
-Alternately you may add the [MockWebServer] as a constructor parameter:
+Annotate fields in test classes with `@StartStop`. The server will be started and shut down
+automatically.
 
 ```
 class MyTest {
-  private final MockWebServer server;
 
-  MyTest(MockWebServer server) {
-    this.server = server;
-  }
-  
+  @StartStop
+  public final MockWebServer server = new MockWebServer();
+
   @Test
   void test() {
     ...
@@ -38,15 +25,9 @@ class MyTest {
 }
 ```
 
-Constructor injection is particularly concise in Kotlin:
+Requirements
+------------
 
-```
-class MyTest(
-  private val server: MockWebServer
-) {
-  @Test
-  fun test() {
-    ...
-  }
-}
-```
+MockWebServer's JUnit 5 integration works on Android 7.0+ (API level 24+) and Java 8+. Note that
+this is above OkHttp's core requirements.
+

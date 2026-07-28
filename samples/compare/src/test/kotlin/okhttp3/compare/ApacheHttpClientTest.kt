@@ -15,12 +15,16 @@
  */
 package okhttp3.compare
 
+import assertk.assertThat
+import assertk.assertions.containsExactlyInAnyOrder
+import assertk.assertions.isEqualTo
+import assertk.assertions.startsWith
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
+import mockwebserver3.junit5.StartStop
 import org.apache.hc.client5.http.classic.methods.HttpGet
 import org.apache.hc.client5.http.impl.classic.HttpClients
 import org.apache.hc.core5.http.io.entity.EntityUtils
-import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 
@@ -34,26 +38,41 @@ import org.junit.jupiter.api.Test
 class ApacheHttpClientTest {
   private val httpClient = HttpClients.createDefault()
 
-  @AfterEach fun tearDown() {
+  @StartStop
+  private val server = MockWebServer()
+
+  @AfterEach
+  fun tearDown() {
     httpClient.close()
   }
 
-  @Test fun get(server: MockWebServer) {
-    server.enqueue(MockResponse()
-        .setBody("hello, Apache HttpClient 5.x"))
+  @Test
+  fun get() {
+    server.enqueue(
+      MockResponse
+        .Builder()
+        .body("hello, Apache HttpClient 5.x")
+        .build(),
+    )
 
     val request = HttpGet(server.url("/").toUri())
     request.addHeader("Accept", "text/plain")
 
+    @Suppress("DEPRECATION")
     httpClient.execute(request).use { response ->
       assertThat(response.code).isEqualTo(200)
       assertThat(EntityUtils.toString(response.entity)).isEqualTo("hello, Apache HttpClient 5.x")
     }
 
     val recorded = server.takeRequest()
-    assertThat(recorded.getHeader("Accept")).isEqualTo("text/plain")
-    assertThat(recorded.getHeader("Accept-Encoding")).isEqualTo("gzip, x-gzip, deflate")
-    assertThat(recorded.getHeader("Connection")).isEqualTo("keep-alive")
-    assertThat(recorded.getHeader("User-Agent")).startsWith("Apache-HttpClient/5.0")
+    assertThat(recorded.headers["Accept"]).isEqualTo("text/plain")
+    assertThat(
+      recorded.headers["Accept-Encoding"]?.split(", ").orEmpty(),
+    ).containsExactlyInAnyOrder(
+      "gzip",
+      "x-gzip",
+      "deflate",
+    )
+    assertThat(recorded.headers["User-Agent"]!!).startsWith("Apache-HttpClient/")
   }
 }

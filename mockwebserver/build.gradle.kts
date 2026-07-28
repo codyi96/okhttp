@@ -1,22 +1,25 @@
-tasks.jar {
-  manifest {
-    attributes("Automatic-Module-Name" to "mockwebserver3")
-  }
+plugins {
+  kotlin("jvm")
+  id("okhttp.publish-conventions")
+  id("okhttp.jvm-conventions")
+  id("okhttp.quality-conventions")
+  id("okhttp.testing-conventions")
 }
+
+project.applyJavaModules("mockwebserver3")
 
 dependencies {
-  api(project(":okhttp"))
+  "friendsApi"(projects.okhttp)
 
-  testImplementation(project(":okhttp-testing-support"))
-  testImplementation(project(":okhttp-tls"))
-  testRuntimeOnly(project(":mockwebserver-junit5"))
-  testImplementation(Dependencies.junit)
-  testImplementation(Dependencies.assertj)
+  testImplementation(projects.okhttpTestingSupport)
+  testImplementation(projects.okhttpTls)
+  testImplementation(projects.mockwebserver3Junit5)
+  testImplementation(libs.junit)
+  testImplementation(libs.kotlin.test.common)
+  testImplementation(libs.kotlin.test.junit)
+  testImplementation(libs.assertk)
 }
 
-afterEvaluate {
-  tasks.dokka {
-    outputDirectory = "$rootDir/docs/4.x"
-    outputFormat = "gfm"
-  }
+kotlin {
+  explicitApi()
 }

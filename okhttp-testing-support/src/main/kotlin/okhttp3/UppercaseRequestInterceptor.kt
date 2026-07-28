@@ -26,36 +26,36 @@ import okio.buffer
 /** Rewrites the request body sent to the server to be all uppercase.  */
 class UppercaseRequestInterceptor : Interceptor {
   @Throws(IOException::class)
-  override fun intercept(chain: Chain): Response {
-    return chain.proceed(uppercaseRequest(chain.request()))
-  }
+  override fun intercept(chain: Chain): Response = chain.proceed(uppercaseRequest(chain.request()))
 
   /** Returns a request that transforms `request` to be all uppercase.  */
   private fun uppercaseRequest(request: Request): Request {
-    val uppercaseBody: RequestBody = object : ForwardingRequestBody(request.body) {
-      @Throws(IOException::class)
-      override fun writeTo(sink: BufferedSink) {
-        delegate().writeTo(uppercaseSink(sink).buffer())
+    val uppercaseBody: RequestBody =
+      object : ForwardingRequestBody(request.body) {
+        @Throws(IOException::class)
+        override fun writeTo(sink: BufferedSink) {
+          delegate().writeTo(uppercaseSink(sink).buffer())
+        }
       }
-    }
-    return request.newBuilder()
-        .method(request.method, uppercaseBody)
-        .build()
+    return request
+      .newBuilder()
+      .method(request.method, uppercaseBody)
+      .build()
   }
 
-  private fun uppercaseSink(sink: Sink): Sink {
-    return object : ForwardingSink(sink) {
+  private fun uppercaseSink(sink: Sink): Sink =
+    object : ForwardingSink(sink) {
       @Throws(IOException::class)
       override fun write(
         source: Buffer,
-        byteCount: Long
+        byteCount: Long,
       ) {
         val bytes = source.readByteString(byteCount)
         delegate.write(
-            Buffer()
-                .write(bytes.toAsciiUppercase()), byteCount
+          Buffer()
+            .write(bytes.toAsciiUppercase()),
+          byteCount,
         )
       }
     }
-  }
 }

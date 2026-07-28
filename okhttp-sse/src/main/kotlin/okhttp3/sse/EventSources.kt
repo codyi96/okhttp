@@ -15,14 +15,22 @@
  */
 package okhttp3.sse
 
+import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Response
 import okhttp3.sse.internal.RealEventSource
 
 object EventSources {
+  @Deprecated(
+    message = "required for binary-compatibility!",
+    level = DeprecationLevel.HIDDEN,
+  )
   @JvmStatic
-  fun createFactory(client: OkHttpClient): EventSource.Factory {
-    return EventSource.Factory { request, listener ->
+  fun createFactory(client: OkHttpClient) = createFactory(client as Call.Factory)
+
+  @JvmStatic
+  fun createFactory(callFactory: Call.Factory): EventSource.Factory =
+    EventSource.Factory { request, listener ->
       val actualRequest =
         if (request.header("Accept") == null) {
           request.newBuilder().addHeader("Accept", "text/event-stream").build()
@@ -31,13 +39,15 @@ object EventSources {
         }
 
       RealEventSource(actualRequest, listener).apply {
-        connect(client)
+        connect(callFactory)
       }
     }
-  }
 
   @JvmStatic
-  fun processResponse(response: Response, listener: EventSourceListener) {
+  fun processResponse(
+    response: Response,
+    listener: EventSourceListener,
+  ) {
     val eventSource = RealEventSource(response.request, listener)
     eventSource.processResponse(response)
   }

@@ -27,7 +27,9 @@ class ParseResponseWithMoshi {
   private val gistJsonAdapter = moshi.adapter(Gist::class.java)
 
   fun run() {
-    val request = Request.Builder()
+    val request =
+      Request
+        .Builder()
         .url("https://api.github.com/gists/c2a7c39532239ff261be")
         .build()
     client.newCall(request).execute().use { response ->
@@ -43,10 +45,14 @@ class ParseResponseWithMoshi {
   }
 
   @JsonClass(generateAdapter = true)
-  data class Gist(var files: Map<String, GistFile>?)
+  data class Gist(
+    var files: Map<String, GistFile>?,
+  )
 
   @JsonClass(generateAdapter = true)
-  data class GistFile(var content: String?)
+  data class GistFile(
+    var content: String?,
+  )
 }
 
 fun main() {

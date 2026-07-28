@@ -14,6 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+@file:Suppress(
+  "CANNOT_OVERRIDE_INVISIBLE_MEMBER",
+  "INVISIBLE_MEMBER",
+  "INVISIBLE_REFERENCE",
+  "ktlint:standard:property-naming",
+)
 
 package mockwebserver3
 
@@ -32,7 +38,6 @@ import java.security.cert.X509Certificate
 import java.util.Collections
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -44,23 +49,18 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
-import mockwebserver3.SocketPolicy.CONTINUE_ALWAYS
-import mockwebserver3.SocketPolicy.DISCONNECT_AFTER_REQUEST
-import mockwebserver3.SocketPolicy.DISCONNECT_AT_END
-import mockwebserver3.SocketPolicy.DISCONNECT_AT_START
-import mockwebserver3.SocketPolicy.DISCONNECT_DURING_REQUEST_BODY
-import mockwebserver3.SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY
-import mockwebserver3.SocketPolicy.DO_NOT_READ_REQUEST_BODY
-import mockwebserver3.SocketPolicy.EXPECT_CONTINUE
-import mockwebserver3.SocketPolicy.FAIL_HANDSHAKE
-import mockwebserver3.SocketPolicy.NO_RESPONSE
-import mockwebserver3.SocketPolicy.RESET_STREAM_AT_START
-import mockwebserver3.SocketPolicy.SHUTDOWN_INPUT_AT_END
-import mockwebserver3.SocketPolicy.SHUTDOWN_OUTPUT_AT_END
-import mockwebserver3.SocketPolicy.SHUTDOWN_SERVER_AFTER_RESPONSE
-import mockwebserver3.SocketPolicy.STALL_SOCKET_AT_START
-import mockwebserver3.SocketPolicy.UPGRADE_TO_SSL_AT_END
-import mockwebserver3.internal.duplex.DuplexResponseBody
+import mockwebserver3.SocketEffect.CloseSocket
+import mockwebserver3.SocketEffect.CloseStream
+import mockwebserver3.SocketEffect.ShutdownConnection
+import mockwebserver3.SocketEffect.Stall
+import mockwebserver3.internal.DEFAULT_REQUEST_LINE_HTTP_1
+import mockwebserver3.internal.DEFAULT_REQUEST_LINE_HTTP_2
+import mockwebserver3.internal.MockWebServerSocket
+import mockwebserver3.internal.RecordedRequest
+import mockwebserver3.internal.RequestLine
+import mockwebserver3.internal.ThrottledSink
+import mockwebserver3.internal.TriggerSink
+import mockwebserver3.internal.decodeRequestLine
 import okhttp3.Headers
 import okhttp3.Headers.Companion.headersOf
 import okhttp3.HttpUrl
@@ -70,7 +70,6 @@ import okhttp3.Response
 import okhttp3.internal.addHeaderLenient
 import okhttp3.internal.closeQuietly
 import okhttp3.internal.concurrent.TaskRunner
-import okhttp3.internal.duplex.MwsDuplexAccess
 import okhttp3.internal.http.HttpMethod
 import okhttp3.internal.http2.ErrorCode
 import okhttp3.internal.http2.Header
@@ -86,55 +85,57 @@ import okhttp3.internal.ws.WebSocketProtocol
 import okio.Buffer
 import okio.BufferedSink
 import okio.BufferedSource
-import okio.ByteString.Companion.encodeUtf8
+import okio.ByteString
 import okio.Sink
 import okio.Timeout
 import okio.buffer
-import okio.sink
-import okio.source
 
 /**
  * A scriptable web server. Callers supply canned responses and the server replays them upon request
  * in sequence.
  */
-class MockWebServer : Closeable {
-  private val taskRunnerBackend = TaskRunner.RealBackend(
-      threadFactory("MockWebServer TaskRunner", daemon = false))
+public class MockWebServer : Closeable {
+  private val taskRunnerBackend =
+    TaskRunner.RealBackend(
+      threadFactory("MockWebServer TaskRunner", daemon = false),
+    )
   private val taskRunner = TaskRunner(taskRunnerBackend)
   private val requestQueue = LinkedBlockingQueue<RecordedRequest>()
   private val openClientSockets =
-      Collections.newSetFromMap(ConcurrentHashMap<Socket, Boolean>())
+    Collections.newSetFromMap(ConcurrentHashMap<Socket, Boolean>())
   private val openConnections =
-      Collections.newSetFromMap(ConcurrentHashMap<Http2Connection, Boolean>())
+    Collections.newSetFromMap(ConcurrentHashMap<Http2Connection, Boolean>())
 
   private val atomicRequestCount = AtomicInteger()
+
+  private var serverSocketFactory_: ServerSocketFactory? = null
+  private var serverSocket: ServerSocket? = null
+
+  /** Non-null after [start]. */
+  private var socketAddress_: InetSocketAddress? = null
+
+  private var sslSocketFactory: SSLSocketFactory? = null
+  private var clientAuth = CLIENT_AUTH_NONE
+
+  private var closed: Boolean = false
 
   /**
    * The number of HTTP requests received thus far by this server. This may exceed the number of
    * HTTP connections when connection reuse is in practice.
    */
-  val requestCount: Int
+  public val requestCount: Int
     get() = atomicRequestCount.get()
 
   /** The number of bytes of the POST body to keep in memory to the given limit. */
-  var bodyLimit = Long.MAX_VALUE
+  public var bodyLimit: Long = Long.MAX_VALUE
 
-  var serverSocketFactory: ServerSocketFactory? = null
-    @Synchronized get() {
-      if (field == null && started) {
-        field = ServerSocketFactory.getDefault() // Build the default value lazily.
-      }
-      return field
-    }
+  public var serverSocketFactory: ServerSocketFactory?
+    @Synchronized get() = serverSocketFactory_
+
     @Synchronized set(value) {
-      check(!started) { "serverSocketFactory must not be set after start()" }
-      field = value
+      check(socketAddress_ == null) { "serverSocketFactory must not be set after start()" }
+      serverSocketFactory_ = value
     }
-
-  private var serverSocket: ServerSocket? = null
-  private var sslSocketFactory: SSLSocketFactory? = null
-  private var tunnelProxy: Boolean = false
-  private var clientAuth = CLIENT_AUTH_NONE
 
   /**
    * The dispatcher used to respond to HTTP requests. The default dispatcher is a [QueueDispatcher],
@@ -143,29 +144,27 @@ class MockWebServer : Closeable {
    * Other dispatchers can be configured. They can vary the response based on timing or the content
    * of the request.
    */
-  var dispatcher: Dispatcher = QueueDispatcher()
+  public var dispatcher: Dispatcher = QueueDispatcher()
 
-  private var portField: Int = -1
-  val port: Int
-    get() {
-      before()
-      return portField
-    }
+  public val socketAddress: InetSocketAddress
+    get() = socketAddress_ ?: error("call start() first")
 
-  val hostName: String
-    get() {
-      before()
-      return inetSocketAddress!!.address.canonicalHostName
-    }
+  public val port: Int
+    get() = socketAddress.port
 
-  private var inetSocketAddress: InetSocketAddress? = null
+  public val hostName: String
+    get() = socketAddress.address.hostName
+
+  /** Returns the address of this server, to connect to it as an HTTP proxy. */
+  public val proxyAddress: Proxy
+    get() = Proxy(Proxy.Type.HTTP, socketAddress)
 
   /**
    * True if ALPN is used on incoming HTTPS connections to negotiate a protocol like HTTP/1.1 or
    * HTTP/2. This is true by default; set to false to disable negotiation and restrict connections
    * to HTTP/1.1.
    */
-  var protocolNegotiationEnabled = true
+  public var protocolNegotiationEnabled: Boolean = true
 
   /**
    * The protocols supported by ALPN on incoming HTTPS connections in order of preference. The list
@@ -173,8 +172,7 @@ class MockWebServer : Closeable {
    *
    * This list is ignored when [negotiation is disabled][protocolNegotiationEnabled].
    */
-  @get:JvmName("protocols") var protocols: List<Protocol> =
-      immutableListOf(Protocol.HTTP_2, Protocol.HTTP_1_1)
+  public var protocols: List<Protocol> = immutableListOf(Protocol.HTTP_2, Protocol.HTTP_1_1)
     set(value) {
       val protocolList = value.toImmutableList()
       require(Protocol.H2_PRIOR_KNOWLEDGE !in protocolList || protocolList.size == 1) {
@@ -187,98 +185,28 @@ class MockWebServer : Closeable {
       field = protocolList
     }
 
-  var started: Boolean = false
-  private var shutdown: Boolean = false
-
-  @Synchronized private fun before() {
-    if (started) return // Don't call start() in case we're already shut down.
-    try {
-      start()
-    } catch (e: IOException) {
-      throw RuntimeException(e)
-    }
-  }
-
-  @JvmName("-deprecated_port")
-  @Deprecated(
-      message = "moved to val",
-      replaceWith = ReplaceWith(expression = "port"),
-      level = DeprecationLevel.ERROR)
-  fun getPort(): Int = port
-
-  fun toProxyAddress(): Proxy {
-    before()
-    val address = InetSocketAddress(inetSocketAddress!!.address.canonicalHostName, port)
-    return Proxy(Proxy.Type.HTTP, address)
-  }
-
-  @JvmName("-deprecated_serverSocketFactory")
-  @Deprecated(
-      message = "moved to var",
-      replaceWith = ReplaceWith(
-          expression = "run { this.serverSocketFactory = serverSocketFactory }"
-      ),
-      level = DeprecationLevel.ERROR)
-  fun setServerSocketFactory(serverSocketFactory: ServerSocketFactory) = run {
-    this.serverSocketFactory = serverSocketFactory
-  }
+  public val started: Boolean
+    get() = socketAddress_ != null
 
   /**
    * Returns a URL for connecting to this server.
    *
    * @param path the request path, such as "/".
    */
-  fun url(path: String): HttpUrl {
-    return HttpUrl.Builder()
-        .scheme(if (sslSocketFactory != null) "https" else "http")
-        .host(hostName)
-        .port(port)
-        .build()
-        .resolve(path)!!
-  }
-
-  @JvmName("-deprecated_bodyLimit")
-  @Deprecated(
-      message = "moved to var",
-      replaceWith = ReplaceWith(
-          expression = "run { this.bodyLimit = bodyLimit }"
-      ),
-      level = DeprecationLevel.ERROR)
-  fun setBodyLimit(bodyLimit: Long) = run { this.bodyLimit = bodyLimit }
-
-  @JvmName("-deprecated_protocolNegotiationEnabled")
-  @Deprecated(
-      message = "moved to var",
-      replaceWith = ReplaceWith(
-          expression = "run { this.protocolNegotiationEnabled = protocolNegotiationEnabled }"
-      ),
-      level = DeprecationLevel.ERROR)
-  fun setProtocolNegotiationEnabled(protocolNegotiationEnabled: Boolean) = run {
-    this.protocolNegotiationEnabled = protocolNegotiationEnabled
-  }
-
-  @JvmName("-deprecated_protocols")
-  @Deprecated(
-      message = "moved to var",
-      replaceWith = ReplaceWith(expression = "run { this.protocols = protocols }"),
-      level = DeprecationLevel.ERROR)
-  fun setProtocols(protocols: List<Protocol>) = run { this.protocols = protocols }
-
-  @JvmName("-deprecated_protocols")
-  @Deprecated(
-      message = "moved to var",
-      replaceWith = ReplaceWith(expression = "protocols"),
-      level = DeprecationLevel.ERROR)
-  fun protocols(): List<Protocol> = protocols
+  public fun url(path: String): HttpUrl =
+    HttpUrl
+      .Builder()
+      .scheme(if (sslSocketFactory != null) "https" else "http")
+      .host(hostName)
+      .port(port)
+      .build()
+      .resolve(path)!!
 
   /**
    * Serve requests with HTTPS rather than otherwise.
-   *
-   * @param tunnelProxy true to expect the HTTP CONNECT method before negotiating TLS.
    */
-  fun useHttps(sslSocketFactory: SSLSocketFactory, tunnelProxy: Boolean) {
+  public fun useHttps(sslSocketFactory: SSLSocketFactory) {
     this.sslSocketFactory = sslSocketFactory
-    this.tunnelProxy = tunnelProxy
   }
 
   /**
@@ -286,7 +214,7 @@ class MockWebServer : Closeable {
    * authentication to another layer such as in an HTTP cookie or header. This is the default and
    * most common configuration.
    */
-  fun noClientAuth() {
+  public fun noClientAuth() {
     this.clientAuth = CLIENT_AUTH_NONE
   }
 
@@ -297,7 +225,7 @@ class MockWebServer : Closeable {
    * certificate at all! But if the client presents an untrusted certificate the handshake
    * will fail and no connection will be established.
    */
-  fun requestClientAuth() {
+  public fun requestClientAuth() {
     this.clientAuth = CLIENT_AUTH_REQUESTED
   }
 
@@ -307,7 +235,7 @@ class MockWebServer : Closeable {
    * proceed normally. If the client presents an untrusted certificate or no certificate at all the
    * handshake will fail and no connection will be established.
    */
-  fun requireClientAuth() {
+  public fun requireClientAuth() {
     this.clientAuth = CLIENT_AUTH_REQUIRED
   }
 
@@ -319,7 +247,7 @@ class MockWebServer : Closeable {
    * @return the head of the request queue
    */
   @Throws(InterruptedException::class)
-  fun takeRequest(): RecordedRequest = requestQueue.take()
+  public fun takeRequest(): RecordedRequest = requestQueue.take()
 
   /**
    * Awaits the next HTTP request (waiting up to the specified wait time if necessary), removes it,
@@ -331,15 +259,10 @@ class MockWebServer : Closeable {
    * @return the head of the request queue
    */
   @Throws(InterruptedException::class)
-  fun takeRequest(timeout: Long, unit: TimeUnit): RecordedRequest? =
-      requestQueue.poll(timeout, unit)
-
-  @JvmName("-deprecated_requestCount")
-  @Deprecated(
-      message = "moved to val",
-      replaceWith = ReplaceWith(expression = "requestCount"),
-      level = DeprecationLevel.ERROR)
-  fun getRequestCount(): Int = requestCount
+  public fun takeRequest(
+    timeout: Long,
+    unit: TimeUnit,
+  ): RecordedRequest? = requestQueue.poll(timeout, unit)
 
   /**
    * Scripts [response] to be returned to a request made in sequence. The first request is
@@ -349,8 +272,9 @@ class MockWebServer : Closeable {
    * @throws ClassCastException if the default dispatcher has been
    * replaced with [setDispatcher][dispatcher].
    */
-  fun enqueue(response: MockResponse) =
-      (dispatcher as QueueDispatcher).enqueueResponse(response.clone())
+  public fun enqueue(response: MockResponse) {
+    (dispatcher as QueueDispatcher).enqueue(response)
+  }
 
   /**
    * Starts the server on the loopback interface for the given port.
@@ -359,7 +283,10 @@ class MockWebServer : Closeable {
    * use port 0 to avoid flakiness when a specific port is unavailable.
    */
   @Throws(IOException::class)
-  @JvmOverloads fun start(port: Int = 0) = start(InetAddress.getByName("localhost"), port)
+  @JvmOverloads
+  public fun start(port: Int = 0) {
+    start(InetAddress.getByName("localhost"), port)
+  }
 
   /**
    * Starts the server on the given address and port.
@@ -369,30 +296,56 @@ class MockWebServer : Closeable {
    * use port 0 to avoid flakiness when a specific port is unavailable.
    */
   @Throws(IOException::class)
-  fun start(inetAddress: InetAddress, port: Int) = start(InetSocketAddress(inetAddress, port))
+  public fun start(
+    inetAddress: InetAddress,
+    port: Int,
+  ) {
+    start(InetSocketAddress(inetAddress, port))
+  }
 
   /**
    * Starts the server and binds to the given socket address.
    *
-   * @param inetSocketAddress the socket address to bind the server on
+   * @param socketAddress the socket address to bind the server on
    */
-  @Synchronized @Throws(IOException::class)
-  private fun start(inetSocketAddress: InetSocketAddress) {
-    check(!shutdown) { "shutdown() already called" }
-    if (started) return
-    started = true
+  @Synchronized
+  @Throws(IOException::class)
+  private fun start(socketAddress: InetSocketAddress) {
+    check(!closed) { "close() already called" }
 
-    this.inetSocketAddress = inetSocketAddress
+    val alreadyStartedAddress = socketAddress_
+    if (alreadyStartedAddress != null) {
+      check(socketAddress.address == alreadyStartedAddress.address) {
+        "unexpected address"
+      }
+      check(socketAddress.port == 0 || socketAddress.port == alreadyStartedAddress.port) {
+        "unexpected port"
+      }
+      return // Already started.
+    }
 
-    serverSocket = serverSocketFactory!!.createServerSocket()
+    var boundSocketAddress = socketAddress
+    try {
+      val serverSocketFactory =
+        serverSocketFactory_
+          ?: (ServerSocketFactory.getDefault()!!.also { this.serverSocketFactory_ = it })
 
-    // Reuse if the user specified a port
-    serverSocket!!.reuseAddress = inetSocketAddress.port != 0
-    serverSocket!!.bind(inetSocketAddress, 50)
+      val serverSocket =
+        serverSocketFactory
+          .createServerSocket()!!
+          .also { this.serverSocket = it }
 
-    portField = serverSocket!!.localPort
+      // Reuse if the user specified a port
+      serverSocket.reuseAddress = socketAddress.port != 0
+      serverSocket.bind(socketAddress, 50)
 
-    taskRunner.newQueue().execute("MockWebServer $portField", cancelable = false) {
+      // If the local port was 0, it'll be non-zero after bind().
+      boundSocketAddress = InetSocketAddress(boundSocketAddress.address, serverSocket.localPort)
+    } finally {
+      this.socketAddress_ = boundSocketAddress
+    }
+
+    taskRunner.newQueue().execute(toString(), cancelable = false) {
       try {
         logger.fine("$this starting to accept connections")
         acceptConnections()
@@ -414,12 +367,13 @@ class MockWebServer : Closeable {
         httpConnection.next().closeQuietly()
         httpConnection.remove()
       }
-      dispatcher.shutdown()
+      dispatcher.close()
     }
   }
 
   @Throws(Exception::class)
   private fun acceptConnections() {
+    var nextConnectionIndex = 0
     while (true) {
       val socket: Socket
       try {
@@ -429,42 +383,48 @@ class MockWebServer : Closeable {
         return
       }
 
-      val socketPolicy = dispatcher.peek().socketPolicy
-      if (socketPolicy === DISCONNECT_AT_START) {
-        dispatchBookkeepingRequest(0, socket)
+      val peek = dispatcher.peek()
+      if (peek.onRequestStart is CloseSocket) {
+        dispatchBookkeepingRequest(
+          connectionIndex = nextConnectionIndex++,
+          exchangeIndex = 0,
+          socket = MockWebServerSocket(socket),
+        )
         socket.close()
       } else {
         openClientSockets.add(socket)
-        serveConnection(socket)
+        serveConnection(nextConnectionIndex++, socket, peek)
       }
     }
   }
 
-  @Synchronized
-  @Throws(IOException::class)
-  fun shutdown() {
-    if (shutdown) return
-    shutdown = true
+  public override fun close() {
+    if (closed) return
+    closed = true
 
     if (!started) return // Nothing to shut down.
     val serverSocket = this.serverSocket ?: return // If this is null, start() must have failed.
 
     // Cause acceptConnections() to break out.
-    serverSocket.close()
+    serverSocket.closeQuietly()
 
     // Await shutdown.
     for (queue in taskRunner.activeQueues()) {
       if (!queue.idleLatch().await(5, TimeUnit.SECONDS)) {
-        throw IOException("Gave up waiting for queue to shut down")
+        throw AssertionError("Gave up waiting for queue to shut down")
       }
     }
     taskRunnerBackend.shutdown()
   }
 
-  private fun serveConnection(raw: Socket) {
+  private fun serveConnection(
+    connectionIndex: Int,
+    raw: Socket,
+    firstExchangePeek: MockResponse,
+  ) {
     taskRunner.newQueue().execute("MockWebServer ${raw.remoteSocketAddress}", cancelable = false) {
       try {
-        SocketHandler(raw).handle()
+        SocketHandler(connectionIndex, raw, firstExchangePeek).handle()
       } catch (e: IOException) {
         logger.fine("$this connection from ${raw.inetAddress} failed: $e")
       } catch (e: Exception) {
@@ -473,102 +433,141 @@ class MockWebServer : Closeable {
     }
   }
 
-  internal inner class SocketHandler(private val raw: Socket) {
-    private var sequenceNumber = 0
+  internal inner class SocketHandler(
+    private val connectionIndex: Int,
+    private val raw: Socket,
+    private val firstExchangePeek: MockResponse,
+  ) {
+    private var nextExchangeIndex = 0
 
     @Throws(Exception::class)
     fun handle() {
-      val socketPolicy = dispatcher.peek().socketPolicy
-      var protocol = Protocol.HTTP_1_1
-      val socket: Socket
+      if (!processTunnelRequests()) return
+
+      val protocol: Protocol
+      val socket: MockWebServerSocket
       when {
         sslSocketFactory != null -> {
-          if (tunnelProxy) {
-            createTunnel()
-          }
-          if (socketPolicy === FAIL_HANDSHAKE) {
-            dispatchBookkeepingRequest(sequenceNumber, raw)
+          if (firstExchangePeek.failHandshake) {
+            dispatchBookkeepingRequest(
+              connectionIndex = connectionIndex,
+              exchangeIndex = nextExchangeIndex++,
+              socket = MockWebServerSocket(raw),
+            )
             processHandshakeFailure(raw)
             return
           }
-          socket = sslSocketFactory!!.createSocket(raw, raw.inetAddress.hostAddress,
-              raw.port, true)
-          val sslSocket = socket as SSLSocket
+          val sslSocket =
+            sslSocketFactory!!.createSocket(
+              raw,
+              raw.inetAddress.hostAddress,
+              raw.port,
+              true,
+            ) as SSLSocket
           sslSocket.useClientMode = false
           if (clientAuth == CLIENT_AUTH_REQUIRED) {
             sslSocket.needClientAuth = true
           } else if (clientAuth == CLIENT_AUTH_REQUESTED) {
             sslSocket.wantClientAuth = true
           }
-          openClientSockets.add(socket)
+          openClientSockets.add(sslSocket)
 
           if (protocolNegotiationEnabled) {
-            Platform.get().configureTlsExtensions(sslSocket, null, protocols)
+            Platform.get().configureTlsExtensions(
+              sslSocket = sslSocket,
+              hostname = null,
+              protocols = protocols,
+              echConfigList = null,
+            )
           }
 
           sslSocket.startHandshake()
 
+          // Wait until after handshake to grab the buffered socket
+          socket = MockWebServerSocket(sslSocket)
+
           if (protocolNegotiationEnabled) {
             val protocolString = Platform.get().getSelectedProtocol(sslSocket)
             protocol =
-                if (protocolString != null) Protocol.get(protocolString) else Protocol.HTTP_1_1
+              when {
+                protocolString != null -> Protocol.get(protocolString)
+                else -> Protocol.HTTP_1_1
+              }
             Platform.get().afterHandshake(sslSocket)
+          } else {
+            protocol = Protocol.HTTP_1_1
           }
           openClientSockets.remove(raw)
         }
-        Protocol.H2_PRIOR_KNOWLEDGE in protocols -> {
-          socket = raw
-          protocol = Protocol.H2_PRIOR_KNOWLEDGE
+
+        else -> {
+          protocol =
+            when {
+              Protocol.H2_PRIOR_KNOWLEDGE in protocols -> Protocol.H2_PRIOR_KNOWLEDGE
+              else -> Protocol.HTTP_1_1
+            }
+          socket = MockWebServerSocket(raw)
         }
-        else -> socket = raw
       }
 
-      if (socketPolicy === STALL_SOCKET_AT_START) {
-        dispatchBookkeepingRequest(sequenceNumber, socket)
+      if (firstExchangePeek.onRequestStart == Stall) {
+        dispatchBookkeepingRequest(
+          connectionIndex = connectionIndex,
+          exchangeIndex = nextExchangeIndex++,
+          socket = socket,
+        )
         return // Ignore the socket until the server is shut down!
       }
 
       if (protocol === Protocol.HTTP_2 || protocol === Protocol.H2_PRIOR_KNOWLEDGE) {
-        val http2SocketHandler = Http2SocketHandler(socket, protocol)
-        val connection = Http2Connection.Builder(false, taskRunner)
-            .socket(socket)
+        val http2SocketHandler = Http2SocketHandler(connectionIndex, socket, protocol)
+        val connection =
+          Http2Connection
+            .Builder(false, taskRunner)
+            .socket(socket, socket.javaNetSocket.remoteSocketAddress.toString())
             .listener(http2SocketHandler)
             .build()
-        connection.start(taskRunner = taskRunner)
+        connection.start()
         openConnections.add(connection)
-        openClientSockets.remove(socket)
+        openClientSockets.remove(socket.javaNetSocket)
         return
       } else if (protocol !== Protocol.HTTP_1_1) {
         throw AssertionError()
       }
 
-      val source = socket.source().buffer()
-      val sink = socket.sink().buffer()
-
-      while (processOneRequest(socket, source, sink)) {
+      while (processOneRequest(socket)) {
       }
 
-      if (sequenceNumber == 0) {
+      if (nextExchangeIndex == 0) {
         logger.warning(
-            "${this@MockWebServer} connection from ${raw.inetAddress} didn't make a request")
+          "${this@MockWebServer} connection from ${raw.inetAddress} didn't make a request",
+        )
       }
 
       socket.close()
-      openClientSockets.remove(socket)
+      openClientSockets.remove(socket.javaNetSocket)
     }
 
     /**
-     * Respond to CONNECT requests until a SWITCH_TO_SSL_AT_END response is
-     * dispatched.
+     * Respond to `CONNECT` requests until a non-tunnel response is peeked. Returns true if further
+     * calls should be attempted on the socket.
      */
     @Throws(IOException::class, InterruptedException::class)
-    private fun createTunnel() {
-      val source = raw.source().buffer()
-      val sink = raw.sink().buffer()
+    private fun processTunnelRequests(): Boolean {
+      if (!dispatcher.peek().inTunnel) return true // No tunnel requests.
+
+      val socket = MockWebServerSocket(raw)
       while (true) {
-        val socketPolicy = dispatcher.peek().socketPolicy
-        check(processOneRequest(raw, source, sink)) { "Tunnel without any CONNECT!" }
-        if (socketPolicy === UPGRADE_TO_SSL_AT_END) return
+        val socketStillGood = processOneRequest(socket)
+
+        // Clean up after the last exchange on a socket.
+        if (!socketStillGood) {
+          raw.close()
+          openClientSockets.remove(raw)
+          return false
+        }
+
+        if (!dispatcher.peek().inTunnel) return true // No more tunnel requests.
       }
     }
 
@@ -577,16 +576,17 @@ class MockWebServer : Closeable {
      * on the socket.
      */
     @Throws(IOException::class, InterruptedException::class)
-    private fun processOneRequest(
-      socket: Socket,
-      source: BufferedSource,
-      sink: BufferedSink
-    ): Boolean {
-      if (source.exhausted()) {
+    private fun processOneRequest(socket: MockWebServerSocket): Boolean {
+      if (socket.source.exhausted()) {
         return false // No more requests on this socket.
       }
 
-      val request = readRequest(socket, source, sink, sequenceNumber)
+      val request =
+        readRequest(
+          socket = socket,
+          connectionIndex = connectionIndex,
+          exchangeIndex = nextExchangeIndex++,
+        )
       atomicRequestCount.incrementAndGet()
       requestQueue.add(request)
 
@@ -595,47 +595,46 @@ class MockWebServer : Closeable {
       }
 
       val response = dispatcher.dispatch(request)
-      if (response.socketPolicy === DISCONNECT_AFTER_REQUEST) {
-        socket.close()
-        return false
-      }
-      if (response.socketPolicy === NO_RESPONSE) {
-        // This read should block until the socket is closed. (Because nobody is writing.)
-        if (source.exhausted()) return false
-        throw ProtocolException("unexpected data")
-      }
 
-      var reuseSocket = true
-      val requestWantsWebSockets = "Upgrade".equals(request.getHeader("Connection"),
-          ignoreCase = true) && "websocket".equals(request.getHeader("Upgrade"),
-          ignoreCase = true)
-      val responseWantsWebSockets = response.webSocketListener != null
-      if (requestWantsWebSockets && responseWantsWebSockets) {
-        handleWebSocketUpgrade(socket, source, sink, request, response)
-        reuseSocket = false
-      } else {
-        writeHttpResponse(socket, sink, response)
-      }
-
-      if (logger.isLoggable(Level.FINE)) {
-        logger.fine(
-            "${this@MockWebServer} received request: $request and responded: $response")
-      }
-
-      // See warnings associated with these socket policies in SocketPolicy.
-      when (response.socketPolicy) {
-        DISCONNECT_AT_END, DO_NOT_READ_REQUEST_BODY -> {
-          socket.close()
+      try {
+        if (handleSocketEffect(response.onResponseStart, socket)) {
           return false
         }
-        SHUTDOWN_INPUT_AT_END -> socket.shutdownInput()
-        SHUTDOWN_OUTPUT_AT_END -> socket.shutdownOutput()
-        SHUTDOWN_SERVER_AFTER_RESPONSE -> shutdown()
-        else -> {
+
+        var reuseSocket = true
+        val requestWantsSocket = "Upgrade".equals(request.headers["Connection"], ignoreCase = true)
+        val requestWantsWebSocket =
+          requestWantsSocket &&
+            "websocket".equals(request.headers["Upgrade"], ignoreCase = true)
+        val responseWantsSocket = response.socketHandler != null
+        val responseWantsWebSocket = response.webSocketListener != null
+        if (requestWantsWebSocket && responseWantsWebSocket) {
+          handleWebSocketUpgrade(socket, request, response)
+          reuseSocket = false
+        } else if (requestWantsSocket && responseWantsSocket) {
+          writeHttpResponse(socket, response)
+          reuseSocket = false
+        } else {
+          writeHttpResponse(socket, response)
+        }
+
+        if (logger.isLoggable(Level.FINE)) {
+          logger.fine(
+            "${this@MockWebServer} received request: $request and responded: $response",
+          )
+        }
+
+        // See warnings associated with these socket policies in SocketPolicy.
+        if (handleSocketEffect(response.onResponseEnd, socket)) {
+          return false
+        }
+
+        return reuseSocket
+      } finally {
+        if (response.shutdownServer) {
+          close()
         }
       }
-      sequenceNumber++
-      return reuseSocket
     }
   }
 
@@ -644,186 +643,256 @@ class MockWebServer : Closeable {
     val context = SSLContext.getInstance("TLS")
     context.init(null, arrayOf<TrustManager>(UNTRUSTED_TRUST_MANAGER), SecureRandom())
     val sslSocketFactory = context.socketFactory
-    val socket = sslSocketFactory.createSocket(
-        raw, raw.inetAddress.hostAddress, raw.port, true) as SSLSocket
+    val socket =
+      sslSocketFactory.createSocket(
+        raw,
+        raw.inetAddress.hostAddress,
+        raw.port,
+        true,
+      ) as SSLSocket
     try {
       socket.startHandshake() // we're testing a handshake failure
       throw AssertionError()
-    } catch (expected: IOException) {
+    } catch (_: IOException) {
     }
     socket.close()
   }
 
   @Throws(InterruptedException::class)
-  private fun dispatchBookkeepingRequest(sequenceNumber: Int, socket: Socket) {
-    val request = RecordedRequest(
-        "", headersOf(), emptyList(), 0L, Buffer(), sequenceNumber, socket)
+  private fun dispatchBookkeepingRequest(
+    connectionIndex: Int,
+    exchangeIndex: Int,
+    socket: MockWebServerSocket,
+    requestLine: RequestLine = DEFAULT_REQUEST_LINE_HTTP_1,
+  ) {
+    val request =
+      RecordedRequest(
+        requestLine = requestLine,
+        headers = headersOf(),
+        chunkSizes = null,
+        bodySize = 0L,
+        body = null,
+        connectionIndex = connectionIndex,
+        exchangeIndex = exchangeIndex,
+        socket = socket,
+      )
     atomicRequestCount.incrementAndGet()
     requestQueue.add(request)
     dispatcher.dispatch(request)
   }
 
-  /** @param sequenceNumber the index of this request on this connection.*/
+  /** @param exchangeIndex the index of this request on this connection.*/
   @Throws(IOException::class)
   private fun readRequest(
-    socket: Socket,
-    source: BufferedSource,
-    sink: BufferedSink,
-    sequenceNumber: Int
+    socket: MockWebServerSocket,
+    connectionIndex: Int,
+    exchangeIndex: Int,
   ): RecordedRequest {
-    var request = ""
+    var request: RequestLine = DEFAULT_REQUEST_LINE_HTTP_1
     val headers = Headers.Builder()
     var contentLength = -1L
     var chunked = false
-    var expectContinue = false
+    var hasBody = false
     val requestBody = TruncatingBuffer(bodyLimit)
-    val chunkSizes = mutableListOf<Int>()
+    var chunkSizes: List<Int>? = null
     var failure: IOException? = null
 
     try {
-      request = source.readUtf8LineStrict()
-      if (request.isEmpty()) {
+      val requestLineString = socket.source.readUtf8LineStrict()
+      if (requestLineString.isEmpty()) {
         throw ProtocolException("no request because the stream is exhausted")
       }
+      request = decodeRequestLine(requestLineString)
 
       while (true) {
-        val header = source.readUtf8LineStrict()
+        val header = socket.source.readUtf8LineStrict()
         if (header.isEmpty()) {
           break
         }
         addHeaderLenient(headers, header)
-        val lowercaseHeader = header.toLowerCase(Locale.US)
+        val lowercaseHeader = header.lowercase(Locale.US)
         if (contentLength == -1L && lowercaseHeader.startsWith("content-length:")) {
           contentLength = header.substring(15).trim().toLong()
         }
-        if (lowercaseHeader.startsWith("transfer-encoding:") && lowercaseHeader.substring(
-                18).trim() == "chunked") {
+        if (lowercaseHeader.startsWith("transfer-encoding:") &&
+          lowercaseHeader.substring(18).trim() == "chunked"
+        ) {
           chunked = true
         }
-        if (lowercaseHeader.startsWith("expect:") && lowercaseHeader.substring(
-                7).trim().equals("100-continue", ignoreCase = true)) {
-          expectContinue = true
-        }
       }
 
-      val socketPolicy = dispatcher.peek().socketPolicy
-      if (expectContinue && socketPolicy === EXPECT_CONTINUE || socketPolicy === CONTINUE_ALWAYS) {
-        sink.writeUtf8("HTTP/1.1 100 Continue\r\n")
-        sink.writeUtf8("Content-Length: 0\r\n")
-        sink.writeUtf8("\r\n")
-        sink.flush()
+      val peek = dispatcher.peek()
+      for (response in peek.informationalResponses) {
+        writeHttpResponse(socket, response)
       }
 
-      var hasBody = false
-      val policy = dispatcher.peek()
-      if (policy.socketPolicy == DO_NOT_READ_REQUEST_BODY) {
-        // Ignore the body completely.
-      } else if (contentLength != -1L) {
-        hasBody = contentLength > 0L
-        throttledTransfer(policy, socket, source, requestBody.buffer(), contentLength, true)
-      } else if (chunked) {
-        hasBody = true
-        while (true) {
-          val chunkSize = source.readUtf8LineStrict().trim().toInt(16)
-          if (chunkSize == 0) {
-            readEmptyLine(source)
-            break
+      val requestBodySink =
+        requestBody
+          .withThrottlingAndSocketEffect(
+            policy = peek,
+            socketEffect = peek.onRequestBody,
+            expectedByteCount = contentLength,
+            socket = socket,
+          ).buffer()
+      requestBodySink.use {
+        when {
+          peek.doNotReadRequestBody -> {
+            hasBody = false // Ignore the body completely.
           }
-          chunkSizes.add(chunkSize)
-          throttledTransfer(policy, socket, source,
-              requestBody.buffer(), chunkSize.toLong(), true)
-          readEmptyLine(source)
+
+          contentLength != -1L -> {
+            hasBody = contentLength > 0L || HttpMethod.permitsRequestBody(request.method)
+            requestBodySink.write(socket.source, contentLength)
+          }
+
+          chunked -> {
+            chunkSizes = mutableListOf()
+            hasBody = true
+            while (true) {
+              val chunkSize =
+                socket.source
+                  .readUtf8LineStrict()
+                  .trim()
+                  .toInt(16)
+              if (chunkSize == 0) {
+                readEmptyLine(socket.source)
+                break
+              }
+              chunkSizes.add(chunkSize)
+              requestBodySink.write(socket.source, chunkSize.toLong())
+              readEmptyLine(socket.source)
+            }
+          }
+
+          else -> {
+            hasBody = false // No request body.
+          }
         }
       }
 
-      val method = request.substringBefore(' ')
-      require(!hasBody || HttpMethod.permitsRequestBody(method)) {
+      require(!hasBody || HttpMethod.permitsRequestBody(request.method)) {
         "Request must not have a body: $request"
       }
     } catch (e: IOException) {
       failure = e
     }
 
-    return RecordedRequest(request, headers.build(), chunkSizes, requestBody.receivedByteCount,
-        requestBody.buffer, sequenceNumber, socket, failure)
+    return RecordedRequest(
+      requestLine = request,
+      headers = headers.build(),
+      chunkSizes = chunkSizes,
+      bodySize = requestBody.receivedByteCount,
+      body =
+        when {
+          hasBody -> requestBody.buffer.readByteString()
+          else -> null
+        },
+      connectionIndex = connectionIndex,
+      exchangeIndex = exchangeIndex,
+      socket = socket,
+      failure = failure,
+    )
   }
 
   @Throws(IOException::class)
   private fun handleWebSocketUpgrade(
-    socket: Socket,
-    source: BufferedSource,
-    sink: BufferedSink,
+    socket: MockWebServerSocket,
     request: RecordedRequest,
-    response: MockResponse
+    response: MockResponse,
   ) {
-    val key = request.getHeader("Sec-WebSocket-Key")
-    response.setHeader("Sec-WebSocket-Accept", WebSocketProtocol.acceptHeader(key!!))
-
-    writeHttpResponse(socket, sink, response)
+    val key = request.headers["Sec-WebSocket-Key"]
+    val webSocketResponse =
+      response
+        .newBuilder()
+        .setHeader("Sec-WebSocket-Accept", WebSocketProtocol.acceptHeader(key!!))
+        .build()
+    writeHttpResponse(socket, webSocketResponse)
 
     // Adapt the request and response into our Request and Response domain model.
-    val scheme = if (request.tlsVersion != null) "https" else "http"
-    val authority = request.getHeader("Host") // Has host and port.
-    val fancyRequest = Request.Builder()
+    val scheme = if (request.handshake != null) "https" else "http"
+    val authority = request.headers["Host"] // Has host and port.
+    val fancyRequest =
+      Request
+        .Builder()
         .url("$scheme://$authority/")
         .headers(request.headers)
         .build()
-    val statusParts = response.status.split(' ', limit = 3)
-    val fancyResponse = Response.Builder()
-        .code(statusParts[1].toInt())
-        .message(statusParts[2])
-        .headers(response.headers)
+    val fancyResponse =
+      Response
+        .Builder()
+        .code(webSocketResponse.code)
+        .message(webSocketResponse.message)
+        .headers(webSocketResponse.headers)
         .request(fancyRequest)
         .protocol(Protocol.HTTP_1_1)
         .build()
 
-    val connectionClose = CountDownLatch(1)
-    val streams = object : RealWebSocket.Streams(false, source, sink) {
-      override fun close() = connectionClose.countDown()
-    }
-    val webSocket = RealWebSocket(
+    val webSocket =
+      RealWebSocket(
         taskRunner = taskRunner,
         originalRequest = fancyRequest,
-        listener = response.webSocketListener!!,
+        listener = webSocketResponse.webSocketListener!!,
         random = SecureRandom(),
         pingIntervalMillis = 0,
-        extensions = WebSocketExtensions.parse(response.headers),
-        minimumDeflateSize = 0L // Compress all messages if compression is enabled.
+        extensions = WebSocketExtensions.parse(webSocketResponse.headers),
+        // Compress all messages if compression is enabled.
+        minimumDeflateSize = 0L,
+        webSocketCloseTimeout = RealWebSocket.CANCEL_AFTER_CLOSE_MILLIS,
+      )
+    val name = "MockWebServer WebSocket ${request.url.encodedPath}"
+
+    webSocket.initReaderAndWriter(
+      name = name,
+      socket = socket,
+      client = false,
     )
-    response.webSocketListener!!.onOpen(webSocket, fancyResponse)
-    val name = "MockWebServer WebSocket ${request.path!!}"
-    webSocket.initReaderAndWriter(name, streams)
-    try {
-      webSocket.loopReader()
 
-      // Even if messages are no longer being read we need to wait for the connection close signal.
-      connectionClose.await()
-    } catch (e: IOException) {
-      webSocket.failWebSocket(e, null)
-    } finally {
-      source.closeQuietly()
-    }
+    webSocket.loopReader(fancyResponse)
+
+    // Even if messages are no longer being read we need to wait for the connection close signal.
+    socket.awaitClosed()
   }
 
   @Throws(IOException::class)
-  private fun writeHttpResponse(socket: Socket, sink: BufferedSink, response: MockResponse) {
-    sleepIfDelayed(response.getHeadersDelay(TimeUnit.MILLISECONDS))
-    sink.writeUtf8(response.status)
-    sink.writeUtf8("\r\n")
+  private fun writeHttpResponse(
+    socket: MockWebServerSocket,
+    response: MockResponse,
+  ) {
+    socket.sleepWhileOpen(response.headersDelayNanos)
+    socket.sink.writeUtf8(response.status)
+    socket.sink.writeUtf8("\r\n")
 
-    writeHeaders(sink, response.headers)
+    writeHeaders(socket.sink, response.headers)
 
-    val body = response.getBody() ?: return
-    sleepIfDelayed(response.getBodyDelay(TimeUnit.MILLISECONDS))
-    throttledTransfer(response, socket, body, sink, body.size, false)
+    if (response.socketHandler != null) {
+      response.socketHandler.handle(socket)
+      return
+    }
 
+    val body = response.body ?: return
+    socket.sleepWhileOpen(response.bodyDelayNanos)
+    val responseBodySink =
+      socket.sink
+        .withThrottlingAndSocketEffect(
+          policy = response,
+          socketEffect = response.onResponseBody,
+          expectedByteCount = body.contentLength,
+          socket = socket,
+        ).buffer()
+    body.writeTo(responseBodySink)
+    responseBodySink.emit()
+
+    socket.sleepWhileOpen(response.trailersDelayNanos)
     if ("chunked".equals(response.headers["Transfer-Encoding"], ignoreCase = true)) {
-      writeHeaders(sink, response.trailers)
+      writeHeaders(socket.sink, response.trailers)
     }
   }
 
   @Throws(IOException::class)
-  private fun writeHeaders(sink: BufferedSink, headers: Headers) {
+  private fun writeHeaders(
+    sink: BufferedSink,
+    headers: Headers,
+  ) {
     for ((name, value) in headers) {
       sink.writeUtf8(name)
       sink.writeUtf8(": ")
@@ -834,67 +903,84 @@ class MockWebServer : Closeable {
     sink.flush()
   }
 
-  private fun sleepIfDelayed(delayMs: Long) {
-    if (delayMs != 0L) {
-      Thread.sleep(delayMs)
+  /** Returns a sink that applies throttling and disconnecting. */
+  private fun Sink.withThrottlingAndSocketEffect(
+    policy: MockResponse,
+    socketEffect: SocketEffect?,
+    expectedByteCount: Long,
+    socket: MockWebServerSocket,
+    stream: Http2Stream? = null,
+  ): Sink {
+    var result: Sink = this
+
+    if (policy.throttlePeriodNanos > 0L) {
+      result =
+        ThrottledSink(
+          socket = socket,
+          delegate = result,
+          bytesPerPeriod = policy.throttleBytesPerPeriod,
+          periodDelayNanos = policy.throttlePeriodNanos,
+        )
     }
+
+    if (socketEffect != null) {
+      val halfwayByteCount =
+        when {
+          expectedByteCount != -1L -> expectedByteCount / 2
+          else -> 0L
+        }
+      result =
+        TriggerSink(
+          delegate = result,
+          triggerByteCount = halfwayByteCount,
+        ) {
+          result.flush()
+          handleSocketEffect(socketEffect, socket, stream)
+        }
+    }
+
+    return result
   }
 
-  /**
-   * Transfer bytes from [source] to [sink] until either [byteCount] bytes have
-   * been transferred or [source] is exhausted. The transfer is throttled according to [policy].
-   */
-  @Throws(IOException::class)
-  private fun throttledTransfer(
-    policy: MockResponse,
-    socket: Socket,
-    source: BufferedSource,
-    sink: BufferedSink,
-    byteCount: Long,
-    isRequest: Boolean
-  ) {
-    var byteCountNum = byteCount
-    if (byteCountNum == 0L) return
+  /** Returns true if processing this exchange is complete. */
+  private fun handleSocketEffect(
+    effect: SocketEffect?,
+    socket: MockWebServerSocket,
+    stream: Http2Stream? = null,
+  ): Boolean {
+    if (effect == null) return false
 
-    val buffer = Buffer()
-    val bytesPerPeriod = policy.throttleBytesPerPeriod
-    val periodDelayMs = policy.getThrottlePeriod(TimeUnit.MILLISECONDS)
-
-    val halfByteCount = byteCountNum / 2
-    val disconnectHalfway = if (isRequest) {
-      policy.socketPolicy === DISCONNECT_DURING_REQUEST_BODY
-    } else {
-      policy.socketPolicy === DISCONNECT_DURING_RESPONSE_BODY
-    }
-
-    while (!socket.isClosed) {
-      var b = 0L
-      while (b < bytesPerPeriod) {
-        // Ensure we do not read past the allotted bytes in this period.
-        var toRead = minOf(byteCountNum, bytesPerPeriod - b)
-        // Ensure we do not read past halfway if the policy will kill the connection.
-        if (disconnectHalfway) {
-          toRead = minOf(toRead, byteCountNum - halfByteCount)
-        }
-
-        val read = source.read(buffer, toRead)
-        if (read == -1L) return
-
-        sink.write(buffer, read)
-        sink.flush()
-        b += read
-        byteCountNum -= read
-
-        if (disconnectHalfway && byteCountNum == halfByteCount) {
+    when (effect) {
+      is CloseStream -> {
+        if (stream != null) {
+          stream.close(ErrorCode.fromHttp2(effect.http2ErrorCode)!!, null)
+        } else {
           socket.close()
-          return
         }
-
-        if (byteCountNum == 0L) return
       }
 
-      sleepIfDelayed(periodDelayMs)
+      ShutdownConnection -> {
+        if (stream != null) {
+          stream.connection.shutdown(ErrorCode.NO_ERROR)
+        } else {
+          socket.close()
+        }
+      }
+
+      is CloseSocket -> {
+        if (effect.shutdownInput) socket.shutdownInput()
+        if (effect.shutdownOutput) socket.shutdownOutput()
+        if (effect.closeSocket) socket.close()
+      }
+
+      Stall -> {
+        // Sleep until the socket is closed.
+        socket.sleepWhileOpen(TimeUnit.MINUTES.toNanos(60))
+        error("expected timeout")
+      }
     }
+
+    return true
   }
 
   @Throws(IOException::class)
@@ -903,20 +989,27 @@ class MockWebServer : Closeable {
     check(line.isEmpty()) { "Expected empty but was: $line" }
   }
 
-  override fun toString(): String = "MockWebServer[$portField]"
-
-  @Throws(IOException::class)
-  override fun close() = shutdown()
+  public override fun toString(): String {
+    val socketAddress = socketAddress_
+    return when {
+      closed -> "MockWebServer{closed}"
+      socketAddress != null -> "MockWebServer{port=${socketAddress.port}}"
+      else -> "MockWebServer{new}"
+    }
+  }
 
   /** A buffer wrapper that drops data after [bodyLimit] bytes. */
-  private class TruncatingBuffer internal constructor(
-    private var remainingByteCount: Long
+  private class TruncatingBuffer(
+    private var remainingByteCount: Long,
   ) : Sink {
-    internal val buffer = Buffer()
-    internal var receivedByteCount = 0L
+    val buffer = Buffer()
+    var receivedByteCount = 0L
 
     @Throws(IOException::class)
-    override fun write(source: Buffer, byteCount: Long) {
+    override fun write(
+      source: Buffer,
+      byteCount: Long,
+    ) {
       val toRead = minOf(remainingByteCount, byteCount)
       if (toRead > 0L) {
         source.read(buffer, toRead)
@@ -941,18 +1034,23 @@ class MockWebServer : Closeable {
   }
 
   /** Processes HTTP requests layered over HTTP/2. */
-  private inner class Http2SocketHandler constructor(
-    private val socket: Socket,
-    private val protocol: Protocol
+  private inner class Http2SocketHandler(
+    private val connectionIndex: Int,
+    private val socket: MockWebServerSocket,
+    private val protocol: Protocol,
   ) : Http2Connection.Listener() {
-    private val sequenceNumber = AtomicInteger()
+    private val nextExchangeIndex = AtomicInteger()
 
     @Throws(IOException::class)
     override fun onStream(stream: Http2Stream) {
-      val peekedResponse = dispatcher.peek()
-      if (peekedResponse.socketPolicy === RESET_STREAM_AT_START) {
-        dispatchBookkeepingRequest(sequenceNumber.getAndIncrement(), socket)
-        stream.close(ErrorCode.fromHttp2(peekedResponse.http2ErrorCode)!!, null)
+      val peek = dispatcher.peek()
+      if (handleSocketEffect(peek.onRequestStart, socket, stream)) {
+        dispatchBookkeepingRequest(
+          connectionIndex = connectionIndex,
+          exchangeIndex = nextExchangeIndex.getAndIncrement(),
+          socket = socket,
+          requestLine = DEFAULT_REQUEST_LINE_HTTP_2,
+        )
         return
       }
 
@@ -963,28 +1061,25 @@ class MockWebServer : Closeable {
         return // Nothing to respond to.
       }
 
-      val response: MockResponse = dispatcher.dispatch(request)
+      val response = dispatcher.dispatch(request)
 
-      val socketPolicy = response.socketPolicy
-      if (socketPolicy === DISCONNECT_AFTER_REQUEST) {
-        socket.close()
-        return
-      }
-      writeResponse(stream, request, response)
-      if (logger.isLoggable(Level.FINE)) {
-        logger.fine(
+      try {
+        if (handleSocketEffect(peek.onResponseStart, socket, stream)) {
+          return
+        }
+
+        writeResponse(stream, request, response)
+        if (logger.isLoggable(Level.FINE)) {
+          logger.fine(
             "${this@MockWebServer} received request: $request " +
-                "and responded: $response protocol is $protocol")
-      }
+              "and responded: $response protocol is $protocol",
+          )
+        }
 
-      when (socketPolicy) {
-        DISCONNECT_AT_END -> {
-          stream.connection.shutdown(ErrorCode.NO_ERROR)
-        }
-        DO_NOT_READ_REQUEST_BODY -> {
-          stream.close(ErrorCode.fromHttp2(response.http2ErrorCode)!!, null)
-        }
-        else -> {
+        handleSocketEffect(peek.onResponseEnd, socket, stream)
+      } finally {
+        if (response.shutdownServer) {
+          close()
         }
       }
     }
@@ -1014,82 +1109,126 @@ class MockWebServer : Closeable {
       val headers = httpHeaders.build()
 
       val peek = dispatcher.peek()
-      if (!readBody && peek.socketPolicy === EXPECT_CONTINUE) {
-        val continueHeaders =
-            listOf(Header(Header.RESPONSE_STATUS, "100 Continue".encodeUtf8()))
-        stream.writeHeaders(continueHeaders, outFinished = false, flushHeaders = true)
-        stream.connection.flush()
-        readBody = true
-      }
-
-      val body = Buffer()
-      val requestLine = "$method $path HTTP/1.1"
-      var exception: IOException? = null
-      if (readBody && !peek.isDuplex && peek.socketPolicy !== DO_NOT_READ_REQUEST_BODY) {
-        try {
-          val contentLengthString = headers["content-length"]
-          val byteCount = contentLengthString?.toLong() ?: Long.MAX_VALUE
-          throttledTransfer(peek, socket, stream.getSource().buffer(),
-              body, byteCount, true)
-        } catch (e: IOException) {
-          exception = e
+      for (response in peek.informationalResponses) {
+        socket.sleepWhileOpen(response.headersDelayNanos)
+        stream.writeHeaders(response.toHttp2Headers(), outFinished = false, flushHeaders = true)
+        if (response.code == 100) {
+          readBody = true
         }
       }
 
-      return RecordedRequest(requestLine, headers, emptyList(), body.size, body,
-          sequenceNumber.getAndIncrement(), socket, exception)
+      val requestLine =
+        RequestLine(
+          method = method,
+          target = path,
+          version = "HTTP/2",
+        )
+      var exception: IOException? = null
+      var bodyByteString: ByteString? = null
+      if (readBody && peek.socketHandler == null && !peek.doNotReadRequestBody) {
+        val body = Buffer()
+        try {
+          val contentLengthString = headers["content-length"]
+          val requestBodySink =
+            body
+              .withThrottlingAndSocketEffect(
+                policy = peek,
+                socketEffect = peek.onRequestBody,
+                expectedByteCount = contentLengthString?.toLong() ?: Long.MAX_VALUE,
+                socket = socket,
+                stream = stream,
+              ).buffer()
+          requestBodySink.use {
+            it.writeAll(stream.source)
+          }
+        } catch (e: IOException) {
+          exception = e
+        } finally {
+          bodyByteString = body.readByteString()
+        }
+      }
+
+      return RecordedRequest(
+        requestLine = requestLine,
+        headers = headers,
+        chunkSizes = null, // No chunked encoding for HTTP/2.
+        bodySize = bodyByteString?.size?.toLong() ?: 0,
+        body =
+          when {
+            HttpMethod.permitsRequestBody(method) -> bodyByteString
+            else -> null
+          },
+        connectionIndex = connectionIndex,
+        exchangeIndex = nextExchangeIndex.getAndIncrement(),
+        socket = socket,
+        failure = exception,
+      )
+    }
+
+    private fun MockResponse.toHttp2Headers(): List<Header> {
+      val result = mutableListOf<Header>()
+      result += Header(Header.RESPONSE_STATUS, code.toString())
+      for ((name, value) in headers) {
+        result += Header(name, value)
+      }
+      return result
     }
 
     @Throws(IOException::class)
     private fun writeResponse(
       stream: Http2Stream,
       request: RecordedRequest,
-      response: MockResponse
+      response: MockResponse,
     ) {
       val settings = response.settings
       stream.connection.setSettings(settings)
 
-      if (response.socketPolicy === NO_RESPONSE) {
-        return
-      }
-      val http2Headers = mutableListOf<Header>()
-      val statusParts = response.status.split(' ', limit = 3)
-      val headersDelayMs = response.getHeadersDelay(TimeUnit.MILLISECONDS)
-      val bodyDelayMs = response.getBodyDelay(TimeUnit.MILLISECONDS)
-
-      if (statusParts.size < 2) {
-        throw AssertionError("Unexpected status: ${response.status}")
-      }
-      http2Headers.add(Header(Header.RESPONSE_STATUS, statusParts[1]))
-      val headers = response.headers
-      for ((name, value) in headers) {
-        http2Headers.add(Header(name, value))
-      }
+      val bodyDelayNanos = response.bodyDelayNanos
       val trailers = response.trailers
-
-      sleepIfDelayed(headersDelayMs)
-      val body = response.getBody()
-      val outFinished = (body == null &&
+      val body = response.body
+      val socketHandler = response.socketHandler
+      val outFinished = (
+        body == null &&
           response.pushPromises.isEmpty() &&
-          !response.isDuplex)
-      val flushHeaders = body == null || bodyDelayMs != 0L
+          socketHandler == null
+      )
+      val flushHeaders = body == null || bodyDelayNanos != 0L
       require(!outFinished || trailers.size == 0) {
         "unsupported: no body and non-empty trailers $trailers"
       }
-      stream.writeHeaders(http2Headers, outFinished, flushHeaders)
+
+      socket.sleepWhileOpen(response.headersDelayNanos)
+      stream.writeHeaders(response.toHttp2Headers(), outFinished, flushHeaders)
+
       if (trailers.size > 0) {
         stream.enqueueTrailers(trailers)
       }
       pushPromises(stream, request, response.pushPromises)
       if (body != null) {
-        stream.getSink().buffer().use { sink ->
-          sleepIfDelayed(bodyDelayMs)
-          throttledTransfer(response, socket, body, sink, body.size, false)
+        socket.sleepWhileOpen(bodyDelayNanos)
+        val responseBodySink =
+          stream
+            .sink
+            .withThrottlingAndSocketEffect(
+              policy = response,
+              socketEffect = response.onResponseBody,
+              expectedByteCount = body.contentLength,
+              socket = socket,
+              stream = stream,
+            ).buffer()
+        responseBodySink.use {
+          body.writeTo(it)
+
+          // Delay trailers by sleeping before we close the stream. It's the same on the wire.
+          if (response.trailersDelayNanos != 0L) {
+            it.flush()
+            socket.sleepWhileOpen(response.trailersDelayNanos)
+          }
         }
-      } else if (response.isDuplex) {
-        val duplexResponseBody = response.duplexResponseBody!!
-        duplexResponseBody.onRequest(request, stream)
+      } else if (socketHandler != null) {
+        socketHandler.handle(stream)
       } else if (!outFinished) {
+        socket.sleepWhileOpen(response.trailersDelayNanos)
         stream.close(ErrorCode.NO_ERROR, null)
       }
     }
@@ -1098,7 +1237,7 @@ class MockWebServer : Closeable {
     private fun pushPromises(
       stream: Http2Stream,
       request: RecordedRequest,
-      promises: List<PushPromise>
+      promises: List<PushPromise>,
     ) {
       for (pushPromise in promises) {
         val pushedHeaders = mutableListOf<Header>()
@@ -1109,47 +1248,51 @@ class MockWebServer : Closeable {
         for ((name, value) in pushPromiseHeaders) {
           pushedHeaders.add(Header(name, value))
         }
-        val requestLine = "${pushPromise.method} ${pushPromise.path} HTTP/1.1"
-        val chunkSizes = emptyList<Int>() // No chunked encoding for HTTP/2.
-        requestQueue.add(RecordedRequest(requestLine, pushPromise.headers, chunkSizes, 0,
-            Buffer(), sequenceNumber.getAndIncrement(), socket))
-        val hasBody = pushPromise.response.getBody() != null
+        val requestLine =
+          RequestLine(
+            method = pushPromise.method,
+            target = pushPromise.path,
+            version = "HTTP/2",
+          )
+        requestQueue.add(
+          RecordedRequest(
+            requestLine = requestLine,
+            headers = pushPromise.headers,
+            chunkSizes = null, // No chunked encoding for HTTP/2.
+            bodySize = 0,
+            body = null,
+            connectionIndex = connectionIndex,
+            exchangeIndex = nextExchangeIndex.getAndIncrement(),
+            socket = socket,
+          ),
+        )
+        val hasBody = pushPromise.response.body != null
         val pushedStream = stream.connection.pushStream(stream.id, pushedHeaders, hasBody)
         writeResponse(pushedStream, request, pushPromise.response)
       }
     }
   }
 
-  companion object {
-    init {
-      MwsDuplexAccess.instance = object : MwsDuplexAccess() {
-        override fun setBody(
-          mockResponse: MockResponse,
-          duplexResponseBody: DuplexResponseBody
-        ) {
-          mockResponse.setBody(duplexResponseBody)
-        }
-      }
-    }
-
+  private companion object {
     private const val CLIENT_AUTH_NONE = 0
     private const val CLIENT_AUTH_REQUESTED = 1
     private const val CLIENT_AUTH_REQUIRED = 2
 
-    private val UNTRUSTED_TRUST_MANAGER = object : X509TrustManager {
-      @Throws(CertificateException::class)
-      override fun checkClientTrusted(
-        chain: Array<X509Certificate>,
-        authType: String
-      ) = throw CertificateException()
+    private val UNTRUSTED_TRUST_MANAGER =
+      object : X509TrustManager {
+        @Throws(CertificateException::class)
+        override fun checkClientTrusted(
+          chain: Array<X509Certificate>,
+          authType: String,
+        ) = throw CertificateException()
 
-      override fun checkServerTrusted(
-        chain: Array<X509Certificate>,
-        authType: String
-      ) = throw AssertionError()
+        override fun checkServerTrusted(
+          chain: Array<X509Certificate>,
+          authType: String,
+        ) = throw AssertionError()
 
-      override fun getAcceptedIssuers(): Array<X509Certificate> = throw AssertionError()
-    }
+        override fun getAcceptedIssuers(): Array<X509Certificate> = throw AssertionError()
+      }
 
     private val logger = Logger.getLogger(MockWebServer::class.java.name)
   }

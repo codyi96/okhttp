@@ -15,47 +15,62 @@
  */
 package okhttp3.okio
 
-import okio.ExperimentalFileSystem
 import okio.FileSystem
 import okio.ForwardingFileSystem
 import okio.Path
 import okio.Sink
 import okio.Source
 
-@OptIn(ExperimentalFileSystem::class)
-class LoggingFilesystem(fileSystem: FileSystem) : ForwardingFileSystem(fileSystem) {
+class LoggingFilesystem(
+  fileSystem: FileSystem,
+) : ForwardingFileSystem(fileSystem) {
   fun log(line: String) {
     println(line)
   }
 
-  override fun appendingSink(file: Path): Sink {
+  override fun appendingSink(
+    file: Path,
+    mustExist: Boolean,
+  ): Sink {
     log("appendingSink($file)")
 
-    return super.appendingSink(file)
+    return super.appendingSink(file, mustExist)
   }
 
-  override fun atomicMove(source: Path, target: Path) {
+  override fun atomicMove(
+    source: Path,
+    target: Path,
+  ) {
     log("atomicMove($source, $target)")
 
     super.atomicMove(source, target)
   }
 
-  override fun createDirectory(dir: Path) {
+  override fun createDirectory(
+    dir: Path,
+    mustCreate: Boolean,
+  ) {
     log("createDirectory($dir)")
 
-    super.createDirectory(dir)
+    super.createDirectory(dir, mustCreate)
   }
 
-  override fun delete(path: Path) {
+  override fun delete(
+    path: Path,
+    mustExist: Boolean,
+  ) {
     log("delete($path)")
 
-    super.delete(path)
+    super.delete(path, mustExist)
   }
 
-  override fun sink(path: Path): Sink {
-    log("sink($path)")
+  override fun sink(
+    file: Path,
+    mustCreate: Boolean,
+  ): Sink {
+    log("sink($file)")
 
-    return super.sink(path)
+    return super.sink(file, mustCreate)
   }
 
   override fun source(file: Path): Source {

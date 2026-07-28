@@ -25,32 +25,25 @@ import java.net.ProtocolException
  */
 internal data class BasicDerAdapter<T>(
   private val name: String,
-
   /** The tag class this adapter expects, or -1 to match any tag class. */
   val tagClass: Int,
-
   /** The tag this adapter expects, or -1 to match any tag. */
   val tag: Long,
-
   /** Encode and decode the value once tags are handled. */
   private val codec: Codec<T>,
-
   /** True if the default value should be used if this value is absent during decoding. */
   val isOptional: Boolean = false,
-
   /** The value to return if this value is absent. Undefined unless this is optional. */
   val defaultValue: T? = null,
-
   /** True to set the encoded or decoded value as the type hint for the current SEQUENCE. */
-  private val typeHint: Boolean = false
+  private val typeHint: Boolean = false,
 ) : DerAdapter<T> {
-
   init {
     require(tagClass >= 0)
     require(tag >= 0)
   }
 
-  override fun matches(header: DerHeader) = header.tagClass == tagClass && header.tag == tag
+  override fun matches(header: DerHeader): Boolean = header.tagClass == tagClass && header.tag == tag
 
   override fun fromDer(reader: DerReader): T {
     val peekedHeader = reader.peekHeader()
@@ -59,9 +52,10 @@ internal data class BasicDerAdapter<T>(
       throw ProtocolException("expected $this but was $peekedHeader at $reader")
     }
 
-    val result = reader.read(name) {
-      codec.decode(reader)
-    }
+    val result =
+      reader.read(name) {
+        codec.decode(reader)
+      }
 
     if (typeHint) {
       reader.typeHint = result
@@ -70,7 +64,10 @@ internal data class BasicDerAdapter<T>(
     return result
   }
 
-  override fun toDer(writer: DerWriter, value: T) {
+  override fun toDer(
+    writer: DerWriter,
+    value: T,
+  ) {
     if (typeHint) {
       writer.typeHint = value
     }
@@ -108,36 +105,27 @@ internal data class BasicDerAdapter<T>(
    */
   fun withTag(
     tagClass: Int = DerHeader.TAG_CLASS_CONTEXT_SPECIFIC,
-    tag: Long
-  ) = copy(tagClass = tagClass, tag = tag)
+    tag: Long,
+  ): BasicDerAdapter<T> = copy(tagClass = tagClass, tag = tag)
 
   /** Returns a copy of this adapter that doesn't encode values equal to [defaultValue]. */
-  fun optional(defaultValue: T? = null) = copy(isOptional = true, defaultValue = defaultValue)
+  fun optional(defaultValue: T? = null): BasicDerAdapter<T> = copy(isOptional = true, defaultValue = defaultValue)
 
   /**
    * Returns a copy of this adapter that sets the encoded or decoded value as the type hint for the
    * other adapters on this SEQUENCE to interrogate.
    */
-  fun asTypeHint() = copy(typeHint = true)
+  fun asTypeHint(): BasicDerAdapter<T> = copy(typeHint = true)
 
-  // Avoid Long.hashCode(long) which isn't available on Android 5.
-  override fun hashCode(): Int {
-    var result = 0
-    result = 31 * result + name.hashCode()
-    result = 31 * result + tagClass
-    result = 31 * result + tag.toInt()
-    result = 31 * result + codec.hashCode()
-    result = 31 * result + (if (isOptional) 1 else 0)
-    result = 31 * result + defaultValue.hashCode()
-    result = 31 * result + (if (typeHint) 1 else 0)
-    return result
-  }
-
-  override fun toString() = "$name [$tagClass/$tag]"
+  override fun toString(): String = "$name [$tagClass/$tag]"
 
   /** Reads and writes values without knowledge of the enclosing tag, length, or defaults. */
   interface Codec<T> {
     fun decode(reader: DerReader): T
-    fun encode(writer: DerWriter, value: T)
+
+    fun encode(
+      writer: DerWriter,
+      value: T,
+    )
   }
 }

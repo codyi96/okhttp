@@ -25,20 +25,17 @@ import okio.buffer
 /** Rewrites the response body returned from the server to be all uppercase.  */
 class UppercaseResponseInterceptor : Interceptor {
   @Throws(IOException::class)
-  override fun intercept(chain: Chain): Response {
-    return uppercaseResponse(chain.proceed(chain.request()))
-  }
+  override fun intercept(chain: Chain): Response = uppercaseResponse(chain.proceed(chain.request()))
 
   private fun uppercaseResponse(response: Response): Response {
     val uppercaseBody: ResponseBody =
       object : ForwardingResponseBody(response.body) {
-        override fun source(): BufferedSource {
-          return uppercaseSource(delegate().source()).buffer()
-        }
+        override fun source(): BufferedSource = uppercaseSource(delegate().source()).buffer()
       }
-    return response.newBuilder()
-        .body(uppercaseBody)
-        .build()
+    return response
+      .newBuilder()
+      .body(uppercaseBody)
+      .build()
   }
 
   private fun uppercaseSource(source: BufferedSource): ForwardingSource {
@@ -46,7 +43,7 @@ class UppercaseResponseInterceptor : Interceptor {
       @Throws(IOException::class)
       override fun read(
         sink: Buffer,
-        byteCount: Long
+        byteCount: Long,
       ): Long {
         val buffer = Buffer()
         val read = delegate.read(buffer, byteCount)

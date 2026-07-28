@@ -24,12 +24,17 @@ import okio.Options
 
 class ServerSentEventReader(
   private val source: BufferedSource,
-  private val callback: Callback
+  private val callback: Callback,
 ) {
   private var lastId: String? = null
 
   interface Callback {
-    fun onEvent(id: String?, type: String?, data: String)
+    fun onEvent(
+      id: String?,
+      type: String?,
+      data: String,
+    )
+
     fun onRetryChange(timeMs: Long)
   }
 
@@ -58,7 +63,7 @@ class ServerSentEventReader(
         }
 
         in 5..7 -> {
-          data.writeByte('\n'.toInt()) // 'data' on a line of its own.
+          data.writeByte('\n'.code) // 'data' on a line of its own.
         }
 
         in 8..9 -> {
@@ -95,13 +100,19 @@ class ServerSentEventReader(
           }
         }
 
-        else -> throw AssertionError()
+        else -> {
+          throw AssertionError()
+        }
       }
     }
   }
 
   @Throws(IOException::class)
-  private fun completeEvent(id: String?, type: String?, data: Buffer) {
+  private fun completeEvent(
+    id: String?,
+    type: String?,
+    data: Buffer,
+  ) {
     if (data.size != 0L) {
       lastId = id
       data.skip(1L) // Leading newline.
@@ -110,41 +121,55 @@ class ServerSentEventReader(
   }
 
   companion object {
-    val options = Options.of(
-        /*  0 */ "\r\n".encodeUtf8(),
-        /*  1 */ "\r".encodeUtf8(),
-        /*  2 */ "\n".encodeUtf8(),
-
-        /*  3 */ "data: ".encodeUtf8(),
-        /*  4 */ "data:".encodeUtf8(),
-
-        /*  5 */ "data\r\n".encodeUtf8(),
-        /*  6 */ "data\r".encodeUtf8(),
-        /*  7 */ "data\n".encodeUtf8(),
-
-        /*  8 */ "id: ".encodeUtf8(),
-        /*  9 */ "id:".encodeUtf8(),
-
-        /* 10 */ "id\r\n".encodeUtf8(),
-        /* 11 */ "id\r".encodeUtf8(),
-        /* 12 */ "id\n".encodeUtf8(),
-
-        /* 13 */ "event: ".encodeUtf8(),
-        /* 14 */ "event:".encodeUtf8(),
-
-        /* 15 */ "event\r\n".encodeUtf8(),
-        /* 16 */ "event\r".encodeUtf8(),
-        /* 17 */ "event\n".encodeUtf8(),
-
-        /* 18 */ "retry: ".encodeUtf8(),
-        /* 19 */ "retry:".encodeUtf8()
-    )
+    val options =
+      Options.of(
+        // 0
+        "\r\n".encodeUtf8(),
+        // 1
+        "\r".encodeUtf8(),
+        // 2
+        "\n".encodeUtf8(),
+        // 3
+        "data: ".encodeUtf8(),
+        // 4
+        "data:".encodeUtf8(),
+        // 5
+        "data\r\n".encodeUtf8(),
+        // 6
+        "data\r".encodeUtf8(),
+        // 7
+        "data\n".encodeUtf8(),
+        // 8
+        "id: ".encodeUtf8(),
+        // 9
+        "id:".encodeUtf8(),
+        // 10
+        "id\r\n".encodeUtf8(),
+        // 11
+        "id\r".encodeUtf8(),
+        // 12
+        "id\n".encodeUtf8(),
+        // 13
+        "event: ".encodeUtf8(),
+        // 14
+        "event:".encodeUtf8(),
+        // 15
+        "event\r\n".encodeUtf8(),
+        // 16
+        "event\r".encodeUtf8(),
+        // 17
+        "event\n".encodeUtf8(),
+        // 18
+        "retry: ".encodeUtf8(),
+        // 19
+        "retry:".encodeUtf8(),
+      )
 
     private val CRLF = "\r\n".encodeUtf8()
 
     @Throws(IOException::class)
     private fun BufferedSource.readData(data: Buffer) {
-      data.writeByte('\n'.toInt())
+      data.writeByte('\n'.code)
       readFully(data, indexOfElement(CRLF))
       select(options) // Skip the newline bytes.
     }

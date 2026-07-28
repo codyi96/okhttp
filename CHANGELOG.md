@@ -1,11 +1,707 @@
 Change Log
 ==========
 
+## Version 5.4.0
+
+_2026-06-08_
+
+ *  New: Add superpowers to interceptors. Interceptors can now override anything settable on
+    `OkHttpClient.Builder`, such as the cache, connection pool, socket factory, and DNS. We expect
+    this will allow most users to use interceptors everywhere, insted of mixing and matching
+    interceptors with custom `Call.Factory` wrappers.
+ *  Fix: Limit each HTTP/2 response to 256 KiB of total headers.
+ *  Upgrade: [kotlinx.coroutines 1.11.0][coroutines_1_11_0]. This is used by the optional
+    `okhttp-coroutines` artifact.
+ *  Upgrade: [GraalVM 25.0.3][graalvm_25].
+ *  Upgrade: [Okio 3.17.0][okio_3_17_0].
+
+
+## Version 5.3.2
+
+_2025-11-18_
+
+ *  Fix: Don't delay triggering timeouts. In Okio 3.16.0 we introduced a regression that caused
+    timeouts to fire later than they were supposed to.
+
+ *  Upgrade: [Okio 3.16.4][okio_3_16_4].
+
+
+## Version 5.3.1
+
+_2025-11-16_
+
+This release is the same as 5.3.0. Okio 3.16.3 didn't have a necessary fix!
+
+*  Upgrade: [Okio 3.16.3][okio_3_16_3].
+
+
+## Version 5.3.0
+
+_2025-10-30_
+
+ *  New: Add tags to `Call`, including computable tags. Use this to attach application-specific
+    metadata to a `Call` in an `EventListener` or `Interceptor`. The tag can be read in any other
+    `EventListener` or `Interceptor`.
+
+    ```kotlin
+      override fun intercept(chain: Interceptor.Chain): Response {
+        chain.call().tag(MyAnalyticsTag::class) {
+          MyAnalyticsTag(...)
+        }
+
+        return chain.proceed(chain.request())
+      }
+    ```
+
+ *  New: Support request bodies on HTTP/1.1 connection upgrades.
+ *  New: `EventListener.plus()` makes it easier to observe events in multiple listeners.
+ *  Fix: Don't spam logs with _‘Method isLoggable in android.util.Log not mocked.’_ when using
+    OkHttp in Robolectric and Paparazzi tests.
+ *  Upgrade: [Kotlin 2.2.21][kotlin_2_2_21].
+ *  Upgrade: [Okio 3.16.2][okio_3_16_2].
+ *  Upgrade: [ZSTD-KMP 0.4.0][zstd_kmp_0_4_0]. This update fixes a bug that caused APKs to fail
+    [16 KB ELF alignment checks][elf_alignment].
+
+
+## Version 5.2.3
+
+_2025-11-18_
+
+ *  Fix: Don't delay triggering timeouts. In Okio 3.16.0 we introduced a regression that caused
+    timeouts to fire later than they were supposed to.
+
+ *  Upgrade: [Okio 3.16.4][okio_3_16_4].
+
+
+## Version 5.2.2
+
+_2025-11-16_
+
+This release is the same as 5.2.1. Okio 3.16.3 didn't have a necessary fix!
+
+ *  Upgrade: [Okio 3.16.3][okio_3_16_3].
+
+
+## Version 5.2.1
+
+_2025-10-09_
+
+ *  Fix: Don't crash when calling `Socket.shutdownOutput()` or `shutdownInput()` on an `SSLSocket`
+    on Android API 21 through 23. This method throws an `UnsupportedOperationException`, so we now
+    catch that and close the underlying stream instead.
+
+ *  Upgrade: [Okio 3.16.1][okio_3_16_1].
+
+
+## Version 5.2.0
+
+_2025-10-07_
+
+ *  New: Support [HTTP 101] responses with `Response.socket`. This mechanism is only supported on
+    HTTP/1.1. We also reimplemented our websocket client to use this new mechanism.
+
+ *  New: The `okhttp-zstd` module negotiates [Zstandard (zstd)][zstd] compression with servers that
+    support it. It integrates a new (unstable) [ZSTD-KMP] library, also from Square. Enable it like
+    this:
+
+    ```kotlin
+    val client = OkHttpClient.Builder()
+      .addInterceptor(CompressionInterceptor(Zstd, Gzip))
+      .build()
+    ```
+
+ *  New: Support the `QUERY` HTTP method. You will need to set the `Request.cacheUrlOverride`
+    property to cache calls made with this method. The `RequestBody.sha256()` may be helpful here;
+    use it to compose a cache URL from the query body.
+
+ *  New: Publish events when calls must wait to execute. `EventListener.dispatcherQueueStart()`
+    is invoked when a call starts waiting, and `dispatcherQueueEnd()` is invoked when it's done.
+
+ *  New: `Request.toCurl()` returns a copy-pasteable [curl] command consistent with Chrome’s and
+    Firefox’s ‘copy as cURL’ features.
+
+ *  New: Support [JPMS]. We replaced our `Automatic-Module-Name` metadata with proper
+    `module-info.java` files.
+
+ *  Fix: Recover gracefully when worker threads are interrupted. When we introduced fast fallback in
+    OkHttp 5.0, we started using background threads while connecting. Sadly that code didn't handle
+    interruptions well. This is now fixed.
+
+ *  Upgrade: [Kotlin 2.2.20][kotlin_2_2_20].
+ *  Upgrade: [Okio 3.16.0][okio_3_16_0].
+
+
+## Version 5.1.0
+
+_2025-07-07_
+
+ *  New: `Response.peekTrailers()`. When we changed `Response.trailers()` to block instead of
+    throwing in 5.0.0, we inadvertently removed the ability for callers to peek the trailers
+    (by catching the `IllegalStateException` if they weren't available). This new API restores that
+    capability.
+
+ *  Fix: Don't crash on `trailers()` if the response doesn't have a body. We broke [Retrofit] users
+    who read the trailers on the `raw()` OkHttp response, after its body was decoded.
+
+
+## Version 5.0.0
+
+_2025-07-02_
+
+This is our first stable release of OkHttp since 2023. Here's the highlights if you're upgrading
+from OkHttp 4.x:
+
+**OkHttp is now packaged as separate JVM and Android artifacts.** This allows us to offer
+platform-specific features and optimizations. If your build system handles [Gradle module metadata],
+this change should be automatic.
+
+**MockWebServer has a new coordinate and package name.** We didn’t like that our old artifact
+depends on JUnit 4 so the new one doesn’t. It also has a better API built on immutable values. (We
+intend to continue publishing the old `okhttp3.mockwebserver` artifact so there’s no urgency to
+migrate.)
+
+| Coordinate                                       | Package Name          | Description                       |
+|:-------------------------------------------------| :-------------------- | :-------------------------------- |
+| com.squareup.okhttp3:mockwebserver3:5.0.0        | mockwebserver3        | Core module. No JUnit dependency! |
+| com.squareup.okhttp3:mockwebserver3-junit4:5.0.0 | mockwebserver3.junit4 | Optional JUnit 4 integration.     |
+| com.squareup.okhttp3:mockwebserver3-junit5:5.0.0 | mockwebserver3.junit5 | Optional JUnit 5 integration.     |
+| com.squareup.okhttp3:mockwebserver:5.0.0         | okhttp3.mockwebserver | Obsolete. Depends on JUnit 4.     |
+
+**OkHttp now supports Happy Eyeballs ([RFC 8305][rfc_8305]) for IPv4+IPv6 networks.** It attempts
+both IPv6 and IPv4 connections concurrently, keeping whichever connects first.
+
+**We’ve improved our Kotlin APIs.** You can skip the builder:
+
+```kotlin
+val request = Request(
+  url = "https://cash.app/".toHttpUrl(),
+)
+```
+
+**OkHttp now supports [GraalVM].**
+
+Here’s what has changed since 5.0.0-alpha.17:
+
+ *  Upgrade: [Okio 3.15.0][okio_3_15_0].
+ *  Upgrade: [Kotlin 2.2.0][kotlin_2_2_0].
+ *  Fix: Don't crash with a `NoSuchMethodError` when using OkHttp with the Sentry SDK.
+ *  Fix: Retain the query data in the old `okhttp3.mockwebserver.RecordedRequest.path` property. We
+    inadvertently changed this behavior when we introduced the `mockwebserver3` API.
+
+
+## Version 5.0.0-alpha.17
+
+_2025-06-29_
+
+This release stabilizes many APIs for the imminent OkHttp 5.0.0 release.
+
+ *  New: `TrailersSource`, a public API for HTTP trailers. Production callers shouldn't need this
+    as the API to read response trailers is unchanged. Testers may use this new stable API to
+    supply trailers for a `Response`.
+
+ *  New: `Path.asRequestBody()` is now a non-experimental API.
+
+ *  New: `FileDescriptor.toRequestBody()` is now a non-experimental API.
+
+ *  New: Stop using experimental coroutines APIs in our `okhttp-coroutines` artifact.
+
+ *  Breaking: Move `gzip` from `RequestBody` to `Request.Builder`. This new API handles both
+    compressing the request body and also adding the corresponding `Content-Encoding` header. Note
+    that this function is sensitive to when it is called: the response body must be supplied before
+    it can be compressed.
+
+ *  Breaking: Remove `AddressPolicy`, `AsyncDns`, and `ConnectionListener` from the public API. We
+    intend to ship a public API for these features, but we don't want to hold OkHttp 5.0.0 until
+    those APIs are stable.
+
+ *  Fix: Change `MockWebServer.close()` to cancel ongoing calls that are blocked on a delay.
+
+ *  Upgrade: [Okio 3.13.0][okio_3_13_0].
+
+This release also stabilizes many APIs in the `mockwebserver3` artifact that's new in 5.0.
+
+ *  Breaking: `RecordedRequest.body` is now nullable. Null is used when the request does not have a
+    body.
+
+ *  Breaking: `RecordedRequest.chunkSizes` is now nullable. Null is used when the request does not
+    use chunked encoding. This is different from an empty list - that indicates the request is
+    chunked but has no data.
+
+ *  Breaking: Replace `SocketPolicy` with a new type, `SocketEffect`. It splits triggers (request
+    start, response body, etc.) from effects (closing the socket, closing the stream, etc.).
+
+ *  Breaking: Rename `RecordedRequest.sequenceNumber` to `exchangeIndex` and introduce
+    `connectionIndex` on that type. These properties may be useful when testing features like
+    connection reuse.
+
+ *  Breaking: Replace our parameters-based JUnit 5 extension with a new annotation, `@StartStop`.
+    Put this annotation on a `MockWebServer` property and the extension will start it before your
+    test executes and stop it after it completes. No further configuration is required.
+
+    ```kotlin
+    @StartStop val server = MockWebServer()
+    ```
+
+ *  Breaking: Don't automatically start `MockWebServer` after calls to accessors like `port`. Now
+    these accessors will throw an `IllegalStateException` if the service has not yet been started.
+
+ *  Breaking: Rename `RecordedRequest.path` to `RecordedRequest.target`. (This property is
+    _sometimes_ a path, but it can also be a path and query, or a full URL.)
+
+ *  Breaking: Decompose the `RecordedRequest.requestLine` into three properties, `method`, `target`,
+    and `version`. This better suits HTTP/2 where the request line had to be synthesized from
+    component headers.
+
+ *  Breaking: Change `RecordedRequest.body` from a mutable `Buffer` to an immutable `ByteString`.
+
+ *  Breaking: Adopt Okio's new `Socket` interface for `MockResponse.socketHandler`.
+
+Note that any _Breaking_ changes above impact only APIs introduced in earlier 5.0.0-alpha releasees.
+We don't break binary compatibility with non-alpha APIs.
+
+
+## Version 5.0.0-alpha.16
+
+_2025-05-29_
+
+ *  Fix: The previous release would crash when running on Robolectric. We didn't anticipate
+    running our Android artifact on the JVM platform!
+
+
+## Version 5.0.0-alpha.15
+
+_2025-05-28_
+
+**This release introduces separate JVM and Android artifacts.** Until now, we've distributed OkHttp
+as a JVM library that _detects_ Android capabilities at runtime, but that doesn't offer
+Android-specific APIs. With this release we're starting to publish OkHttp as an AAR for Android
+users in addition to our existing JAR for JVM users.
+
+This first Android-specific artifact adopts Android's `assets` mechanism to embed the public suffix
+data. We will build more Android integration in future releases.
+
+The okhttp-android artifact first introduced in `5.0.0-alpha.7` is no longer available:
+
+ *  The `AndroidAsyncDns` class moved to the `okhttp` artifact.
+ *  The `AndroidLogging` class is no longer necessary. `LoggingEventListener` and
+    `HttpLoggingInterceptor` write to logcat by default.
+
+The rest of this release is our highest-quality release yet. Though we continue to use the word
+_alpha_ in the version name, the only unstable thing in it is some non-final APIs tagged
+`@ExperimentalOkHttpApi`. You can safely use this release in production.
+
+ *  Fix: Attempt to read the response even if sending the request failed. This makes it possible
+    to handle response statuses like `HTTP/1.1 431 "Request Header Fields Too Large`.
+
+ *  Fix: Handle multiple 1xx responses.
+
+ *  Fix: Address a performance bug in our internal task runner. We had a race condition that could
+    result in it OkHttp starting a thread for each queued task, even when a single thread could run
+    all of them.
+
+ *  Fix: Address a performance bug in `MultipartReader`. We were scanning the entire input stream
+    for a delimiter when we only needed to scan enough to return a result.
+
+ *  Fix: Don't double-compress the public suffix database. OkHttp is usually distributed in a
+    compressed file (like a JAR or APK), so compressing its internal data was redundant.
+
+ *  Fix: Call `ProxySelector.connectFailed()` when a connection's initial TCP handshake fails.
+
+ *  Fix: Change the signature of `Dispatcher` to accept a nullable `ExecutorService`. Changing this
+    parameter to be non-null was an unintended signature change in OkHttp 4.0.
+
+ *  New: `EventListener.retryDecision()` is called each time a request fails with an `IOException`.
+    It notifies your listener if OkHttp will retry.
+
+ *  New: `EventListener.followUpDecision()` is called each time a response is received. It notifies
+    your listener if OkHttp has decided to make a follow-up request. Some common follow-ups are
+    authentication challenges and redirects.
+
+ *  New: Handy constants for `Headers.EMPTY`, `RequestBody.EMPTY`, and `ResponseBody.EMPTY`.
+
+ *  New: OkHttp now calls `StrictMode.noteSlowCall()` when initializing TLS on Android. Use
+    `StrictMode` to detect if your `OkHttpClient` is being initialized on the main thread.
+
+ *  Upgrade: [Okio 3.12.0][okio_3_12_0].
+
+ *  Upgrade: [Kotlin 2.1.21][kotlin_2_1_21].
+
+ *  Upgrade: [kotlinx.coroutines 1.10.2][coroutines_1_10_2]. This is used by the optional
+    `okhttp-coroutines` artifact.
+
+ *  Upgrade: [AndroidX Startup 1.2.0][startup_1_2_0]. The Android variant of the `okhttp` artifact
+    now depends on this. This is a new dependency.
+
+ *  Upgrade: [AndroidX Annotation 1.9.1][annotation_1_9_1]. As above, the Android variant of the
+    `okhttp` artifact now depends on this. This is also a new dependency.
+
+
+## Version 5.0.0-alpha.14
+
+_2024-04-17_
+
+ *  Breaking: Move coroutines extensions to okhttp3.coroutines. Previously this artifact shared the
+    `okhttp3` package name with our core module, which is incompatible with the Java Platform Module
+    System.
+
+ *  Fix in okhttp-coroutines: Publish a valid artifact. The coroutines JAR file in 5.0.0-alpha.13
+    was corrupt and should not be used.
+
+
+## Version 5.0.0-alpha.13
+
+_2024-04-16_
+
+ *  Breaking: Tag unstable new APIs as `@ExperimentalOkHttpApi`. We intend to release OkHttp 5.0
+    without stabilizing these new APIs first.
+
+    Do not use these experimental APIs in modules that may be executed using a version of OkHttp
+    different from the version that the module was compiled with. Do not use them in published
+    libraries. Do not use them if you aren't willing to track changes to them.
+
+ *  Breaking: Drop support for Kotlin Multiplatform.
+
+    We planned to support multiplatform in OkHttp 5.0, but after building it, we weren't happy with
+    the implementation trade-offs. We can't use our HTTP client engine on Kotlin/JS, and we weren't
+    prepared to build a TLS API for Kotlin/Native.
+
+    We'd prefer a multiplatform HTTP client API that's backed by OkHttp on Android and JVM, and
+    other engines on other platforms. [Ktor] does this pretty well today!
+
+ *  Breaking: Use `kotlin.time.Duration` in APIs like `OkHttpClient.Builder.callTimeout()`. This
+    update also drops support for the `DurationUnit` functions introduced in earlier alpha releases
+    of OkHttp 5.
+
+ *  Breaking: Reorder the parameters in the Cache constructor that was introduced in 5.0.0-alpha.3.
+
+ *  New: `Request.Builder.cacheUrlOverride()` customizes the cache key used for a request. This can
+    be used to make canonical URLs for the cache that omit insignificant query parameters or other
+    irrelevant data.
+
+    This feature may be used with `POST` requests to cache their responses. In such cases the
+    request body is not used to determine the cache key, so you must manually add cache-relevant
+    data to the override URL. For example, you could add a `request-body-sha256` query parameter so
+    requests with the same POST data get the same cache entry.
+
+ *  New: `HttpLoggingInterceptor.redactQueryParams()` configures the query parameters to redact
+    in logs. For best security, don't put sensitive information in query parameters.
+
+ *  New: `ConnectionPool.setPolicy()` configures a minimum connection pool size for a target
+    address. Use this to proactively open HTTP connections.
+
+    Connections opened to fulfill this policy are subject to the connection pool's
+    `keepAliveDuration` but do not count against the pool-wide `maxIdleConnections` limit.
+
+    This feature increases the client's traffic and the load on the server. Talking to your server's
+    operators before adopting it.
+
+ *  New in okhttp-android: `HttpLoggingInterceptor.androidLogging()` and
+    `LoggingEventListener.androidLogging()` write HTTP calls or events to Logcat.
+
+ *  New: `OkHttpClient.webSocketCloseTimeout` configures how long a web socket connection will wait
+    for a graceful shutdown before it performs an abrupt shutdown.
+
+ *  Fix: Honor `RequestBody.isOneShot()` in `MultipartBody`
+
+ *  Fix in `okhttp-coroutines`: Don't leak response bodies in `executeAsync()`. We had a bug where
+    we didn't call `Response.close()` if the coroutine was canceled before its response was
+    returned.
+
+ *  Upgrade: [Okio 3.9.0][okio_3_9_0].
+
+ *  Upgrade: [Kotlin 1.9.23][kotlin_1_9_23].
+
+ *  Upgrade: [Unicode® IDNA 15.1.0][idna_15_1_0]
+
+
+## Version 5.0.0-alpha.12
+
+_2023-12-17_
+
+We took too long to cut this release and there's a lot of changes in it. We've been busy.
+
+Although this release is labeled _alpha_, the only unstable thing in it is our new APIs. This
+release has many critical bug fixes and is safe to run in production. We're eager to stabilize our
+new APIs so we can get out of alpha.
+
+ *  New: Support Java 21's virtual threads (‘OpenJDK Project Loom’). We changed OkHttp's internals
+    to use `Lock` and `Condition` instead of `synchronized` for best resource utilization.
+
+ *  New: Switch our Internationalized Domain Name (IDN) implementation to [UTS #46 Nontransitional
+    Processing][uts46]. With this fix, the `ß` code point no longer maps to `ss`. OkHttp now embeds
+    its own IDN mapping table in the library.
+
+ *  New: Prefer the client's configured precedence order for TLS cipher suites. (OkHttp used to
+    prefer the JDK’s precedence order.) This change may cause your HTTP calls to negotiate a
+    different cipher suite than before! OkHttp's defaults cipher suites are selected for good
+    security and performance.
+
+ *  New: `ConnectionListener` publishes events for connects, disconnects, and use of pooled
+    connections.
+
+ *  Fix: Immediately update the connection's flow control window instead of waiting for the
+    receiving stream to process it.
+
+    This change may increase OkHttp's memory use for applications that make many concurrent HTTP
+    calls and that can receive data faster than they can process it. Previously, OkHttp limited
+    HTTP/2 to 16 MiB of unacknowledged data per connection. With this fix there is a limit of 16 MiB
+    of unacknowledged data per stream and no per-connection limit.
+
+ *  Fix: Don't close a `Deflater` while we're still using it to compress a web socket message. We
+    had a severe bug where web sockets were closed on the wrong thread, which caused
+    `NullPointerException` crashes in `Deflater`.
+
+ *  Fix: Don't crash after a web socket fails its connection upgrade. We incorrectly released
+    the web socket's connections back to the pool before their resources were cleaned up.
+
+ *  Fix: Don't infinite loop when a received web socket message has self-terminating compressed
+    data.
+
+ *  Fix: Don't fail the call when the response code is ‘HTTP 102 Processing’ or ‘HTTP 103 Early
+    Hints’.
+
+ *  Fix: Honor interceptors' changes to connect and read timeouts.
+
+ *  Fix: Recover gracefully when a cached response is corrupted on disk.
+
+ *  Fix: Don't leak file handles when a cache disk write fails.
+
+ *  Fix: Don't hang when the public suffix database cannot be loaded. We had a bug where a failure
+    reading the public suffix database would cause subsequent reads to hang when they should have
+    crashed.
+
+ *  Fix: Avoid `InetAddress.getCanonicalHostName()` in MockWebServer. This avoids problems if the
+    host machine's IP address has additional DNS registrations.
+
+ *  New: Create a JPMS-compatible artifact for `JavaNetCookieJar`. Previously, multiple OkHttp
+    artifacts defined classes in the `okhttp3` package, but this is forbidden by the Java module
+    system. We've fixed this with a new package (`okhttp3.java.net.cookiejar`) and a new artifact,
+    `com.squareup.okhttp3:okhttp-java-net-cookiehandler`. (The original artifact now delegates to
+    this new one.)
+
+    ```kotlin
+    implementation("com.squareup.okhttp3:okhttp-java-net-cookiehandler:5.0.0-alpha.12")
+    ```
+
+ *  New: `Cookie.sameSite` determines whether cookies should be sent on cross-site requests. This
+    is used by servers to defend against Cross-Site Request Forgery (CSRF) attacks.
+
+ *  New: Log the total time of the HTTP call in `HttpLoggingInterceptor`.
+
+ *  New: `OkHttpClient.Builder` now has APIs that use `kotlin.time.Duration`.
+
+ *  New: `mockwebserver3.SocketPolicy` is now a sealed interface. This is one of several
+    backwards-incompatible API changes that may impact early adopters of this alpha API.
+
+ *  New: `mockwebserver3.Stream` for duplex streams.
+
+ *  New: `mockwebserver3.MockResponseBody` for streamed response bodies.
+
+ *  New: `mockwebserver3.MockResponse` is now immutable, with a `Builder`.
+
+ *  New: `mockwebserver3.RecordedRequest.handshakeServerNames` returns the SNI (Server Name
+    Indication) attribute from the TLS handshake.
+
+ *  Upgrade: [Kotlin 1.9.21][kotlin_1_9_21].
+
+ *  Upgrade: [Okio 3.7.0][okio_3_7_0].
+
+
+## Version 5.0.0-alpha.11
+
+_2022-12-24_
+
+ *  New: Enable fast fallback by default. It's our implementation of Happy Eyeballs,
+    [RFC 8305][rfc_8305]. Disable with `OkHttpClient.Builder.fastFallback(false)`.
+ *  Fix: Don't log response bodies for server-sent events.
+ *  Fix: Skip early hints (status code 103) responses.
+ *  Fix: Don't log sensitive headers in `Request.toString()`.
+ *  Fix: Don't crash when the dispatcher's `ExecutorService` is shutdown with many
+    calls still enqueued.
+ *  Upgrade: [GraalVM 22][graalvm_22].
+ *  Upgrade: [Kotlin 1.7.10][kotlin_1_7_10].
+
+
+## Version 5.0.0-alpha.10
+
+_2022-06-26_
+
+ *  Fix: Configure the multiplatform artifact (`com.squareup.okhttp3:okhttp:3.x.x`) to depend on the
+    JVM artifact (`com.squareup.okhttp3:okhttp-jvm:3.x.x`) for Maven builds. This should work-around
+    an issue where Maven doesn't interpret Gradle metadata.
+ *  Fix: Make another attempt at supporting Kotlin 1.5.31 at runtime. We were crashing on
+    `DurationUnit` which was a typealias in 1.5.x.
+ *  Upgrade: [Okio 3.2.0][okio_3_2_0].
+
+
+## Version 5.0.0-alpha.9
+
+_2022-06-16_
+
+ *  New: Enforce label length limits in URLs. `HttpUrl` now rejects URLs whose domains aren't valid.
+    This includes overly-long domain names (longer than 253 characters), overly-long labels (more
+    than 63 characters between dots), and empty labels.
+ *  New: Don't include the `Content-Length` header in multipart bodies. Servers must delimit
+    OkHttp's request bodies using the boundary only. (This change makes OkHttp more consistent with
+    browsers and other HTTP clients.)
+ *  New: Drop the `tunnelProxy` argument in `MockWebServer.useHttps()`. This change only impacts
+    the OkHttp 5.x API which uses the `mockwebserver3` package.
+ *  Fix: Don't call `toDuration()` which isn't available in kotlin-stdlib 1.4.
+
+
+## Version 5.0.0-alpha.8
+
+_2022-06-08_
+
+ *  Fix: Change how `H2_PRIOR_KNOWLEDGE` works with HTTP proxies. Previously OkHttp assumed the
+    proxy itself was a prior knowledge HTTP/2 server. With this update, OkHttp attempts a `CONNECT`
+    tunnel just as it would with HTTPS. For prior knowledge with proxies OkHttp's is now consistent
+    with these curl arguments:
+
+    ```
+    curl \
+      --http2-prior-knowledge \
+      --proxy localhost:8888 \
+      --proxytunnel \
+      http://squareup.com/robots.txt
+    ```
+
+ *  Fix: Support executing OkHttp on kotlin-stdlib versions as old as 1.4. The library still builds
+    on up-to-date Kotlin releases (1.6.21) but no longer needs that version as a runtime dependency.
+    This should make it easier to use OkHttp in Gradle plugins.
+
+ *  Fix: Don't start the clock on response timeouts until the request body is fully transmitted.
+    This is only relevant for duplex request bodies, because they are written concurrently when
+    reading the response body.
+
+ *  New: `MockResponse.inTunnel()` is a new `mockwebserver3` API to configure responses that are
+    served while creating a proxy tunnel. This obsoletes both the `tunnelProxy` argument on
+    `MockWebServer` and the `UPGRADE_TO_SSL_AT_END` socket option. (Only APIs on `mockwebserver3`
+    are changed; the old `okhttp3.mockwebserver` APIs remain as they always have been.
+
+
+## Version 5.0.0-alpha.7
+
+_2022-04-26_
+
+**This release introduces new Kotlin-friendly APIs.** When we migrated OkHttp from Java to Kotlin in
+OkHttp 4.0, we kept our Java-first APIs. With 5.0 we're continuing to support Java and adding
+additional improvements for Kotlin users. In this alpha we're excited to skip-the-builder for
+requests and remove a common source of non-null assertions (`!!`) on the response body.
+
+The alpha releases in the 5.0.0 series have production-quality code and an unstable API. We expect
+to make changes to the APIs introduced in 5.0.0-alpha.X. These releases are safe for production use
+and 'alpha' strictly signals that we're still experimenting with some new APIs. If you're eager for
+the fixes or features below, please upgrade.
+
+ *  New: Named and default parameters constructor for `Request`:
+
+    ```
+    val request = Request(
+      url = "https://cash.app/".toHttpUrl(),
+    )
+    ```
+
+ *  New: `Response.body` is now non-null. This was generally the case in OkHttp 4.x, but the Kotlin
+    type declaration was nullable to support rare cases like the body on `Response.cacheResponse`,
+    `Response.networkResponse`, and `Response.priorResponse`. In such cases the body is now
+    non-null, but attempts to read its content will fail.
+ *  New: Kotlin-specific APIs for request tags. Kotlin language users can lookup tags with a type
+    parameter only, like `request.tag<MyTagClass>()`.
+ *  New: MockWebServer has improved support for HTTP/1xx responses. Once you've migrated to the new
+    `mockwebserver3` package, there's a new field, `MockResponse.informationalResponses`.
+ *  Fix: Don't interpret trailers as headers after an HTTP/100 response. This was a bug only when
+    the HTTP response body itself is empty.
+ *  Fix: Don't crash when a fast fallback call has both a deferred connection and a held connection.
+ *  Fix: `OkHttpClient` no longer implements `Cloneable`. It never should have; the class is
+    immutable. This is left over from OkHttp 2.x (!) when that class was mutable. We're using the
+    5.x upgrade as an opportunity to remove very obsolete APIs.
+ *  Fix: Recover gracefully when Android's `NativeCrypto` crashes with `"ssl == null"`. This occurs
+    when OkHttp retrieves ALPN state on a closed connection.
+ *  Upgrade: [Kotlin 1.6.21][kotlin_1_6_21].
+ *  Upgrade: [Okio 3.1.0][okio_3_1_0].
+
+
+## Version 5.0.0-alpha.6
+
+_2022-03-14_
+
+ *  Fix: Don't attempt to close pooled connections. We saw occasional fast fallback calls crash in
+    the previous alpha due to an unexpected race.
+
+
+## Version 5.0.0-alpha.5
+
+_2022-02-21_
+
+ *  Fix: Don't include [Assertk][assertk] in OkHttp's production dependencies. This regression was
+    introduced in the 5.0.0-alpha.4 release.
+ *  Fix: Don't ask `Dns` implementations to resolve strings that are already IP addresses.
+ *  Fix: Change fast fallback to race TCP handshakes only. To avoid wasted work, OkHttp will not
+    attempt multiple TLS handshakes for the same call concurrently.
+ *  Fix: Don't crash loading the public suffix database in GraalVM native images. The function
+    `HttpUrl.topPrivateDomain()` uses a resource file to identify private domains, but we didn't
+    include this file on GraalVM.
+
+
+## Version 5.0.0-alpha.4
+
+_2022-02-01_
+
+**This release introduces fast fallback to better support mixed IPv4+IPv6 networks.** Fast fallback
+is what we're calling our implementation of Happy Eyeballs, [RFC 8305][rfc_8305]. With this
+feature OkHttp will attempt both IPv6 and IPv4 connections concurrently, keeping whichever connects
+first. Fast fallback gives IPv6 connections a 250 ms head start so IPv6 is preferred on networks
+where it's available.
+
+To opt-in, configure your `OkHttpClient.Builder`:
+
+
+```
+OkHttpClient client = new OkHttpClient.Builder()
+    .fastFallback(true)
+    .build();
+```
+
+ *  New: Change the build from Kotlin-JVM to Kotlin-multiplatform (which includes JVM). Both
+    native and JavaScript platforms are unstable preview releases and subject to
+    backwards-incompatible changes in forthcoming releases.
+ *  Fix: Don't crash loading the public suffix database resource in obfuscated builds.
+ *  Fix: Don't silently ignore calls to `EventSource.cancel()` made from
+    `EventSourceListener.onOpen()`.
+ *  Fix: Enforce the max intermediates constraint when using pinned certificates with Conscrypt.
+    This impacts Conscrypt when the server's presented certificates form both a trusted-but-unpinned
+    chain and an untrusted-but-pinned chain.
+ *  Upgrade: [Kotlin 1.6.10][kotlin_1_6_10].
+
+
+## Version 5.0.0-alpha.3
+
+_2021-11-22_
+
+ *  Fix: Change `Headers.toString()` to redact authorization and cookie headers.
+ *  Fix: Don't do DNS to get the hostname for `RecordedRequest.requestUrl`. This was doing a DNS
+    lookup for the local hostname, but we really just wanted the `Host` header.
+ *  Fix: Don't crash with a `InaccessibleObjectException` when detecting the platform trust manager
+    on Java 17+.
+ *  Fix: Don't crash if a cookie's value is a lone double quote character.
+ *  Fix: Don't crash when canceling an event source created by `EventSources.processResponse()`.
+ *  New: `Cache` now has a public constructor that takes an [okio.FileSystem]. This should make it
+    possible to implement decorators for cache encryption or compression.
+ *  New: `Cookie.newBuilder()` to build upon an existing cookie.
+ *  New: Use TLSv1.3 when running on JDK 8u261 or newer.
+ *  New: `QueueDispatcher.clear()` may be used to reset a MockWebServer instance.
+ *  New: `FileDescriptor.toRequestBody()` may be particularly useful for users of Android's Storage
+    Access Framework.
+ *  Upgrade: [Kotlin 1.5.31][kotlin_1_5_31].
+ *  Upgrade: [Okio 3.0.0][okio_3_0_0].
+
+
 ## Version 5.0.0-alpha.2
 
 _2021-01-30_
 
-**In this release MockWebServer has a new Maven coordinate and package name.** A longstanding 
+**In this release MockWebServer has a new Maven coordinate and package name.** A longstanding
 problem with MockWebServer has been its API dependency on JUnit 4. We've reorganized things to
 remove that dependency while preserving backwards compatibility.
 
@@ -17,14 +713,14 @@ remove that dependency while preserving backwards compatibility.
 | com.squareup.okhttp3:mockwebserver:5.0.0-alpha.2         | okhttp3.mockwebserver | Obsolete. Depends on JUnit 4.     |
 
 The new APIs use `mockwebserver3` in both the Maven coordinate and package name. This new API is
-**not stable** and will likely change before the final 5.0.0 release.  
+**not stable** and will likely change before the final 5.0.0 release.
 
 If you have code that subclasses `okhttp3.mockwebserver.QueueDispatcher`, this update is not source
 or binary compatible. Migrating to the new `mockwebserver3` package will fix this problem.
 
- *  New: DNS over HTTPS is now a stable feature of OkHttp. We introduced this as an experimental 
+ *  New: DNS over HTTPS is now a stable feature of OkHttp. We introduced this as an experimental
     module in 2018. We are confident in its stable API and solid implementation.
- *  Fix: Work around a crash in Android 10 and 11 that may be triggered when two threads 
+ *  Fix: Work around a crash in Android 10 and 11 that may be triggered when two threads
     concurrently close an SSL socket. This would have appeared in crash logs as
     `NullPointerException: bio == null`.
  *  Fix: Use plus `+` instead of `%20` to encode space characters in `FormBody`. This was a
@@ -46,7 +742,7 @@ _2021-01-30_
 
 GraalVM is an exciting new platform and we're eager to adopt it. The startup time improvements over
 the JVM are particularly impressive. Try it with okcurl:
- 
+
 ```
 $ ./gradlew okcurl:nativeImage
 $ ./okcurl/build/graal/okcurl https://cash.app/robots.txt
@@ -57,7 +753,7 @@ and Android! Please report any issues you encounter: we'll fix them urgently.
 
  *  Fix: Attempt to read the response body even if the server canceled the request. This will cause
     some calls to return nice error codes like `HTTP/1.1 429 Too Many Requests` instead of transport
-    errors like `SocketException: Connection reset` and `StreamResetException: stream was reset: 
+    errors like `SocketException: Connection reset` and `StreamResetException: stream was reset:
     CANCEL`.
  *  New: Support OSGi metadata.
  *  Upgrade: [Okio 2.9.0][okio_2_9_0].
@@ -69,524 +765,58 @@ and Android! Please report any issues you encounter: we'll fix them urgently.
 Note that this was originally released on 2020-10-06 as 4.10.0-RC1. The only change from that
 release is the version name.
 
-
-## Version 4.9.1
-
-_2021-01-30_
-
- *  Fix: Work around a crash in Android 10 and 11 that may be triggered when two threads
-    concurrently close an SSL socket. This would have appeared in crash logs as
-    `NullPointerException: bio == null`.
-
-
-## Version 4.9.0
-
-_2020-09-11_
-
-**With this release, `okhttp-tls` no longer depends on Bouncy Castle and doesn't install the
-Bouncy Castle security provider.** If you still need it, you can do it yourself: 
-
-```
-Security.addProvider(BouncyCastleProvider())
-```
-
-You will also need to configure this dependency:
-
-```
-dependencies {
-  implementation "org.bouncycastle:bcprov-jdk15on:1.65"
-}
-```
-
- *  Upgrade: [Kotlin 1.4.10][kotlin_1_4_10]. We now use Kotlin 1.4.x [functional
-    interfaces][fun_interface] for `Authenticator`, `Interceptor`, and others.
- *  Upgrade: Build with Conscrypt 2.5.1.
-
-
-## Version 4.8.1
-
-_2020-08-06_
-
- *  Fix: Don't crash in `HeldCertificate.Builder` when creating certificates on older versions of
-    Android, including Android 6. We were using a feature of `SimpleDateFormat` that wasn't
-    available in those versions!
-
-
-## Version 4.8.0
-
-_2020-07-11_
-
- *  New: Change `HeldCertificate.Builder` to use its own ASN.1 certificate encoder. This is part
-    of our effort to remove the okhttp-tls module's dependency on Bouncy Castle. We think Bouncy 
-    Castle is great! But it's a large dependency (6.5 MiB) and its security provider feature 
-    impacts VM-wide behavior.
-
- *  New: Reduce contention for applications that make a very high number of concurrent requests.
-    Previously OkHttp used its connection pool as a lock when making changes to connections and
-    calls. With this change each connection is locked independently.
-    
- *  Upgrade: [Okio 2.7.0][okio_2_7_0].
-
-    ```kotlin
-    implementation("com.squareup.okio:okio:2.7.0")
-    ```
-
- *  Fix: Avoid log messages like "Didn't find class org.conscrypt.ConscryptHostnameVerifier" when
-    detecting the TLS capabilities of the host platform.
-    
- *  Fix: Don't crash in `HttpUrl.topPrivateDomain()` when the hostname is malformed. 
-
- *  Fix: Don't attempt Brotli decompression if the response body is empty.
-
-
-## Version 4.7.2
-
-_2020-05-20_
-
- *  Fix: Don't crash inspecting whether the host platform is JVM or Android. With 4.7.0 and 4.7.1 we
-    had a crash `IllegalArgumentException: Not a Conscrypt trust manager` because we depended on
-    initialization order of companion objects.
-
-
-## Version 4.7.1
-
-_2020-05-18_
-
- *  Fix: Pass the right arguments in the trust manager created for `addInsecureHost()`. Without the
-    fix insecure hosts crash with an `IllegalArgumentException` on Android.
-
-
-## Version 4.7.0
-
-_2020-05-17_
-
- *  New: `HandshakeCertificates.Builder.addInsecureHost()` makes it easy to turn off security in
-    private development environments that only carry test data. Prefer this over creating an
-    all-trusting `TrustManager` because only hosts on the allowlist are insecure. From
-    [our DevServer sample][dev_server]:
-
-    ```kotlin
-    val clientCertificates = HandshakeCertificates.Builder()
-        .addPlatformTrustedCertificates()
-        .addInsecureHost("localhost")
-        .build()
-
-    val client = OkHttpClient.Builder()
-        .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
-        .build()
-    ```
-
- *  New: Add `cacheHit`, `cacheMiss`, and `cacheConditionalHit()` events to `EventListener`. Use
-    these in logs, metrics, and even test cases to confirm your cache headers are configured as
-    expected.
-
- *  New: Constant string `okhttp3.VERSION`. This is a string like "4.5.0-RC1", "4.5.0", or
-    "4.6.0-SNAPSHOT" indicating the version of OkHttp in the current runtime. Use this to include
-    the OkHttp version in custom `User-Agent` headers.
-
- *  Fix: Don't crash when running as a plugin in Android Studio Canary 4.1. To enable
-    platform-specific TLS features OkHttp must detect whether it's running in a JVM or in Android.
-    The upcoming Android Studio runs in a JVM but has classes from Android and that confused OkHttp!
-
- *  Fix: Include the header `Accept: text/event-stream` for SSE calls. This header is not added if
-    the request already contains an `Accept` header.
-
- *  Fix: Don't crash with a `NullPointerException` if a server sends a close while we're sending a
-    ping. OkHttp had a race condition bug.
-
-
-## Version 4.6.0
-
-_2020-04-28_
-
- *  Fix: Follow HTTP 307 and 308 redirects on methods other than GET and POST. We're reluctant to
-    change OkHttp's behavior in handling common HTTP status codes, but this fix is overdue! The new
-    behavior is now consistent with [RFC 7231][rfc_7231_647], which is newer than OkHttp itself.
-    If you want this update with the old behavior use [this interceptor][legacy_interceptor].
-
- *  Fix: Don't crash decompressing web sockets messages. We had a bug where we assumed deflated
-    bytes in would always yield deflated bytes out and this isn't always the case!
-
- *  Fix: Reliably update and invalidate the disk cache on windows. As originally designed our
-    internal `DiskLruCache` assumes an inode-like file system, where it's fine to delete files that
-    are currently being read or written. On Windows the file system forbids this so we must be more
-    careful when deleting and renaming files.
-
- *  Fix: Don't crash on Java 8u252 which introduces an API previously found only on Java 9 and
-    above. See [Jetty's overview][jetty_8_252] of the API change and its consequences.
-
- *  New: `MultipartReader` is a streaming decoder for [MIME multipart (RFC 2045)][rfc_2045]
-    messages. It complements `MultipartBody` which is our streaming encoder.
-
-    ```kotlin
-    val response: Response = call.execute()
-    val multipartReader = MultipartReader(response.body!!)
-
-    multipartReader.use {
-      while (true) {
-        val part = multipartReader.nextPart() ?: break
-        process(part.headers, part.body)
-      }
-    }
-    ```
-
- *  New: `MediaType.parameter()` gets a parameter like `boundary` from a media type like
-    `multipart/mixed; boundary="abc"`.
-
- *  New: `Authenticator.JAVA_NET_AUTHENTICATOR` forwards authentication requests to
-    `java.net.Authenticator`. This obsoletes `JavaNetAuthenticator` in the `okhttp-urlconnection`
-    module.
-
- *  New: `CertificatePinner` now offers an API for inspecting the configured pins.
-
- *  Upgrade: [Okio 2.6.0][okio_2_6_0].
-
-    ```kotlin
-    implementation("com.squareup.okio:okio:2.6.0")
-    ```
-
- *  Upgrade: [publicsuffix.org data][public_suffix]. This powers `HttpUrl.topPrivateDomain()`.
-    It's also how OkHttp knows which domains can share cookies with one another.
-
- *  Upgrade: [Bouncy Castle 1.65][bouncy_castle_releases]. This dependency is required by the
-    `okhttp-tls` module.
-
- *  Upgrade: [Kotlin 1.3.71][kotlin_1_3_71].
-
-
-## Version 4.5.0
-
-_2020-04-06_
-
-**This release fixes a severe bug where OkHttp incorrectly detected and recovered from unhealthy
-connections.** Stale or canceled connections were incorrectly attempted when they shouldn't have
-been, leading to rare cases of infinite retries. Please upgrade to this release!
-
- *  Fix: don't return stale DNS entries in `DnsOverHttps`. We were caching DNS results indefinitely
-    rather than the duration specified in the response's cache-control header.
- *  Fix: Verify certificate IP addresses in canonical form. When a server presents a TLS certificate
-    containing an IP address we must match that address against the URL's IP address, even when the
-    two addresses are encoded differently, such as `192.168.1.1` and `0::0:0:FFFF:C0A8:101`. Note
-    that OkHttp incorrectly rejected valid certificates resulting in a failure to connect; at no
-    point were invalid certificates accepted.
- *  New: `OkHttpClient.Builder.minWebSocketMessageToCompress()` configures a threshold for
-    compressing outbound web socket messages. Configure this with 0L to always compress outbound
-    messages and `Long.MAX_VALUE` to never compress outbound messages. The default is 1024L which
-    compresses messages of size 1 KiB and larger. (Inbound messages are compressed or not based on
-    the web socket server's configuration.)
- *  New: Defer constructing `Inflater` and `Deflater` instances until they are needed. This saves
-    memory if web socket compression is negotiated but not used.
-
-
-## Version 4.5.0-RC1
-
-_2020-03-17_
-
-**This release candidate turns on web socket compression.**
-
-The [spec][rfc_7692] includes a sophisticated mechanism for client and server to negotiate
-compression features. We strive to offer great performance in our default configuration and so we're
-making compression the default for everyone starting with this release candidate.
-
-Please be considerate of your servers and their operators as you roll out this release. Compression
-saves bandwidth but it costs CPU and memory! If you run into a problem you may need to adjust or
-disable the `permessage-deflate` compression settings on your server.
-
-Note that OkHttp won't use compression when sending messages smaller than 1 KiB.
-
- *  Fix: Don't crash when the URL hostname contains an underscore on Android.
- *  Fix: Change HTTP/2 to use a daemon thread for its socket reader. If you've ever seen a command
-    line application hang after all of the work is done, it may be due to a non-daemon thread like
-    this one.
- *  New: Include suppressed exceptions when all routes to a target service fail.
-
-
-## Version 4.4.1
-
-_2020-03-08_
-
- *  Fix: Don't reuse a connection on redirect if certs match but DNS does not. For better
-    locality and performance OkHttp attempts to use the same pooled connection across redirects and
-    follow-ups. It independently shares connections when the IP addresses and certificates match,
-    even if the host names do not. In 4.4.0 we introduced a regression where we shared a connection
-    when certificates matched but the DNS addresses did not. This would only occur when following a
-    redirect from one hostname to another, and where both hosts had common certificates.
-
- *  Fix: Don't fail on a redirect when a client has configured a 'trust everything' trust manager.
-    Typically this would cause certain redirects to fail in debug and development configurations.
-
-
-## Version 4.4.0
-
-_2020-02-17_
-
- *  New: Support `canceled()` as an event that can be observed by `EventListener`. This should be
-    useful for splitting out canceled calls in metrics.
-
- *  New: Publish a [bill of materials (BOM)][bom] for OkHttp. Depend on this from Gradle or Maven to
-    keep all of your OkHttp artifacts on the same version, even if they're declared via transitive
-    dependencies. You can even omit versions when declaring other OkHttp dependencies.
-
-    ```kotlin
-    dependencies {
-       api(platform("com.squareup.okhttp3:okhttp-bom:4.4.0"))
-       api("com.squareup.okhttp3:okhttp")              // No version!
-       api("com.squareup.okhttp3:logging-interceptor") // No version!
-    }
-    ```
-
- *  New: Upgrade to Okio 2.4.3.
-
-    ```kotlin
-    implementation("com.squareup.okio:okio:2.4.3")
-    ```
-
- *  Fix: Limit retry attempts for HTTP/2 `REFUSED_STREAM` and `CANCEL` failures.
- *  Fix: Retry automatically when incorrectly sharing a connection among multiple hostnames. OkHttp
-    shares connections when hosts share both IP addresses and certificates, such as `squareup.com`
-    and `www.squareup.com`. If a server refuses such sharing it will return HTTP 421 and OkHttp will
-    automatically retry on an unshared connection.
- *  Fix: Don't crash if a TLS tunnel's response body is truncated.
- *  Fix: Don't track unusable routes beyond their usefulness. We had a bug where we could track
-    certain bad routes indefinitely; now we only track the ones that could be necessary.
- *  Fix: Defer proxy selection until a proxy is required. This saves calls to `ProxySelector` on
-    calls that use a pooled connection.
-
-
-## Version 4.3.1
-
-_2020-01-07_
-
- *  Fix: Don't crash with a `NullPointerException` when a web socket is closed before it connects.
-    This regression was introduced in OkHttp 4.3.0.
- *  Fix: Don't crash with an `IllegalArgumentException` when using custom trust managers on 
-    Android 10. Android uses reflection to look up a magic `checkServerTrusted()` method and we 
-    didn't have it.
- *  Fix: Explicitly specify the remote server name when making HTTPS connections on Android 5. In
-    4.3.0 we introduced a regression where server name indication (SNI) was broken on Android 5.
-
-
-## Version 4.3.0
-
-_2019-12-31_
-
- *  Fix: Degrade HTTP/2 connections after a timeout. When an HTTP/2 stream times out it may impact
-    the stream only or the entire connection. With this fix OkHttp will now send HTTP/2 pings after 
-    a stream timeout to determine whether the connection should remain eligible for pooling.
-
- *  Fix: Don't call `EventListener.responseHeadersStart()` or `responseBodyStart()` until bytes have
-    been received. Previously these events were incorrectly sent too early, when OkHttp was ready to
-    read the response headers or body, which mislead tracing tools. Note that the `responseFailed()`
-    event always used to follow one of these events; now it may be sent without them.
-
- *  New: Upgrade to Kotlin 1.3.61.
- 
- *  New: Match any number of subdomains with two asterisks in `CertificatePinner`. For example, 
-    `**.squareup.com` matches `us-west.www.squareup.com`, `www.squareup.com` and `squareup.com`.
-
- *  New: Share threads more aggressively between OkHttp's HTTP/2 connections, connection pool, 
-    web sockets, and cache. OkHttp has a new internal task runner abstraction for managed task
-    scheduling. In your debugger you will see new thread names and more use of daemon threads.
-
- *  Fix: Don't drop callbacks on unexpected exceptions. When an interceptor throws an unchecked 
-    exception the callback is now notified that the call was canceled. The exception is still sent 
-    to the uncaught exception handler for reporting and recovery.
-
- *  Fix: Un-deprecate `MockResponse.setHeaders()` and other setters. These were deprecated in OkHttp
-    4.0 but that broke method chaining for Java callers.
-
- *  Fix: Don't crash on HTTP/2 HEAD requests when the `Content-Length` header is present but is not
-    consistent with the length of the response body.
-
- *  Fix: Don't crash when converting a `HttpUrl` instance with an unresolvable hostname to a URI.
-    The new behavior strips invalid characters like `"` and `{` from the hostname before converting.
-
- *  Fix: Undo a performance regression introduced in OkHttp 4.0 caused by differences in behavior
-    between Kotlin's `assert()` and Java's `assert()`. (Kotlin always evaluates the argument; Java
-    only does when assertions are enabled.) 
-
- *  Fix: Honor `RequestBody.isOneShot()` in `HttpLoggingInterceptor`.
-
-
-## Version 4.2.2
-
-_2019-10-06_
-
- *  Fix: When closing a canceled HTTP/2 stream, don't send the `END_STREAM` flag. This could cause
-    the server to incorrectly interpret the stream as having completed normally. This is most useful
-    when a request body needs to cancel its own call.
-
-
-## Version 4.2.1
-
-_2019-10-02_
-
- *  Fix: In 4.1.0 we introduced a performance regression that prevented connections from being
-    pooled in certain situations. We have good test coverage for connection pooling but we missed
-    this because it only occurs if you have proxy configured and you share a connection pool among
-    multiple `OkHttpClient` instances.
-
-    This particularly-subtle bug was caused by us assigning each `OkHttpClient` instance its own
-    `NullProxySelector` when an explicit proxy is configured. But we don't share connections when
-    the proxy selectors are different. Ugh!
-
-
-## Version 4.2.0
-
-_2019-09-10_
-
- *  New: API to decode a certificate and private key to create a `HeldCertificate`. This accepts a
-    string containing both a certificate and PKCS #8-encoded private key.
-
-    ```kotlin
-    val heldCertificate = HeldCertificate.decode("""
-        |-----BEGIN CERTIFICATE-----
-        |MIIBYTCCAQegAwIBAgIBKjAKBggqhkjOPQQDAjApMRQwEgYDVQQLEwtlbmdpbmVl
-        |cmluZzERMA8GA1UEAxMIY2FzaC5hcHAwHhcNNzAwMTAxMDAwMDA1WhcNNzAwMTAx
-        |MDAwMDEwWjApMRQwEgYDVQQLEwtlbmdpbmVlcmluZzERMA8GA1UEAxMIY2FzaC5h
-        |cHAwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASda8ChkQXxGELnrV/oBnIAx3dD
-        |ocUOJfdz4pOJTP6dVQB9U3UBiW5uSX/MoOD0LL5zG3bVyL3Y6pDwKuYvfLNhoyAw
-        |HjAcBgNVHREBAf8EEjAQhwQBAQEBgghjYXNoLmFwcDAKBggqhkjOPQQDAgNIADBF
-        |AiAyHHg1N6YDDQiY920+cnI5XSZwEGhAtb9PYWO8bLmkcQIhAI2CfEZf3V/obmdT
-        |yyaoEufLKVXhrTQhRfodTeigi4RX
-        |-----END CERTIFICATE-----
-        |-----BEGIN PRIVATE KEY-----
-        |MEECAQAwEwYHKoZIzj0CAQYIKoZIzj0DAQcEJzAlAgEBBCA7ODT0xhGSNn4ESj6J
-        |lu/GJQZoU9lDrCPeUcQ28tzOWw==
-        |-----END PRIVATE KEY-----
-        """.trimMargin())
-    val handshakeCertificates = HandshakeCertificates.Builder()
-        .heldCertificate(heldCertificate)
-        .build()
-    val server = MockWebServer()
-    server.useHttps(handshakeCertificates.sslSocketFactory(), false)
-    ```
-
-    Get these strings with `HeldCertificate.certificatePem()` and `privateKeyPkcs8Pem()`.
-
- *  Fix: Handshake now returns peer certificates in canonical order: each certificate is signed by
-    the certificate that follows and the last certificate is signed by a trusted root.
-
- *  Fix: Don't lose HTTP/2 flow control bytes when incoming data races with a stream close. If this
-    happened enough then eventually the connection would stall.
-
- *  Fix: Acknowledge and apply inbound HTTP/2 settings atomically. Previously we had a race where we
-    could use new flow control capacity before acknowledging it, causing strict HTTP/2 servers to
-    fail the call.
-
-
-## Version 4.1.1
-
-_2019-09-05_
-
- *  Fix: Don't drop repeated headers when validating cached responses. In our Kotlin upgrade we
-    introduced a regression where we iterated the number of unique header names rather than then
-    number of unique headers. If you're using OkHttp's response cache this may impact you.
-
-
-## Version 4.1.0
-
-_2019-08-12_
-
- [brotli]: https://github.com/google/brotli
-
- *  **OkHttp's new okhttp-brotli module implements Brotli compression.** Install the interceptor to
-    enable [Brotli compression][brotli], which compresses 5-20% smaller than gzip.
-
-    ```
-    val client = OkHttpClient.Builder()
-        .addInterceptor(BrotliInterceptor)
-        .build()
-    ```
-
-    This artifact has a dependency on Google's Brotli decoder (95 KiB).
-
- *  New: `EventListener.proxySelectStart()`, `proxySelectEnd()` events give visibility into the
-    proxy selection process.
- *  New: `Response.byteString()` reads the entire response into memory as a byte string.
- *  New: `OkHttpClient.x509TrustManager` accessor.
- *  New: Permit [new WebSocket response codes][iana_websocket]: 1012 (Service Restart), 1013 (Try
-    Again Later), and 1014 (invalid response from the upstream).
- *  New: Build with Kotlin 1.3.41, BouncyCastle 1.62, and Conscrypt 2.2.1.
- *  Fix: Recover gracefully when a coalesced connection immediately goes unhealthy.
- *  Fix: Defer the `SecurityException` when looking up the default proxy selector.
- *  Fix: Don't use brackets formatting IPv6 host names in MockWebServer.
- *  Fix: Don't permit cache iterators to remove entries that are being written.
-
-
-## Version 4.0.1
-
-_2019-07-10_
-
- *  Fix: Tolerate null-hostile lists in public API. Lists created with `List.of(...)` don't like it
-    when you call `contains(null)` on them!
- *  Fix: Retain binary-compatibility in `okhttp3.internal.HttpHeaders.hasBody()`. Some unscrupulous
-    coders call this and we don't want their users to suffer.
-
-
-## Version 4.0.0
-
-_2019-06-26_
-
-**This release upgrades OkHttp to Kotlin.** We tried our best to make fast and safe to upgrade
-from OkHttp 3.x. We wrote an [upgrade guide][upgrading_to_okhttp_4] to help with the migration and a
-[blog post][okhttp4_blog_post] to explain it.
-
- *  Fix: Target Java 8 bytecode for Java and Kotlin.
-
-
-## Version 4.0.0-RC3
-
-_2019-06-24_
-
- *  Fix: Retain binary-compatibility in `okhttp3.internal.HttpMethod`. Naughty third party SDKs
-    import this and we want to ease upgrades for their users.
-
-
-## Version 4.0.0-RC2
-
-_2019-06-21_
-
- *  New: Require Kotlin 1.3.40.
- *  New: Change the Kotlin API from `File.toRequestBody()` to `File.asRequestBody()` and
-    `BufferedSource.toResponseBody()` to `BufferedSource.asResponseBody()`. If the returned value
-    is a view of what created it, we use _as_.
- *  Fix: Permit response codes of zero for compatibility with OkHttp 3.x.
- *  Fix: Change the return type of `MockWebServer.takeRequest()` to be nullable.
- *  Fix: Make `Call.clone()` public to Kotlin callers.
-
-
-## Version 4.0.0-RC1
-
-_2019-06-03_
-
- *  First stable preview of OkHttp 4.
-
-
-## Version 3.x
-
-[Change log](https://square.github.io/okhttp/changelog_3x/)
-
-
- [bom]: https://docs.gradle.org/6.2/userguide/platforms.html#sub:bom_import
- [bouncy_castle_releases]: https://www.bouncycastle.org/releasenotes.html
- [dev_server]: https://github.com/square/okhttp/blob/482f88300f78c3419b04379fc26c3683c10d6a9d/samples/guide/src/main/java/okhttp3/recipes/kt/DevServer.kt
- [fun_interface]: https://kotlinlang.org/docs/reference/fun-interfaces.html
- [graalvm]: https://www.graalvm.org/
- [graalvm_21]: https://www.graalvm.org/release-notes/21_0/
- [iana_websocket]: https://www.iana.org/assignments/websocket/websocket.txt
- [jetty_8_252]: https://webtide.com/jetty-alpn-java-8u252/
- [kotlin_1_3_71]: https://github.com/JetBrains/kotlin/releases/tag/v1.3.71
- [kotlin_1_4_10]: https://github.com/JetBrains/kotlin/releases/tag/v1.4.10
- [kotlin_1_4_20]: https://github.com/JetBrains/kotlin/releases/tag/v1.4.20
- [legacy_interceptor]: https://gist.github.com/swankjesse/80135f4e03629527e723ab3bcf64be0b
- [okhttp4_blog_post]: https://cashapp.github.io/2019-06-26/okhttp-4-goes-kotlin
- [okio_2_6_0]: https://square.github.io/okio/changelog/#version-260
- [okio_2_7_0]: https://square.github.io/okio/changelog/#version-270
- [okio_2_9_0]: https://square.github.io/okio/changelog/#version-290
- [public_suffix]: https://publicsuffix.org/
- [upgrading_to_okhttp_4]: https://square.github.io/okhttp/upgrading_to_okhttp_4/
- [rfc_2045]: https://tools.ietf.org/html/rfc2045
- [rfc_7231_647]: https://tools.ietf.org/html/rfc7231#section-6.4.7
- [rfc_7692]: https://tools.ietf.org/html/rfc7692
- [semver]: https://semver.org/
+## Version 4.x
+
+See [4.x Change log](https://lysine.dev/okhttp/changelogs/changelog_4x/) for the legacy version changelogs.
+
+[GraalVM]: https://www.graalvm.org/
+[Gradle module metadata]: https://docs.gradle.org/current/userguide/publishing_gradle_module_metadata.html
+[HTTP 101]: https://httpwg.org/specs/rfc9110.html#status.101
+[JPMS]: https://openjdk.org/projects/jigsaw/spec/
+[Ktor]: https://ktor.io/
+[Retrofit]: https://lysine.dev/retrofit/
+[ZSTD-KMP]: https://github.com/square/zstd-kmp
+[androidx_startup]: https://developer.android.com/jetpack/androidx/releases/startup
+[annotation_1_9_1]: https://developer.android.com/jetpack/androidx/releases/annotation#annotation-1.9.1
+[assertk]: https://github.com/willowtreeapps/assertk
+[coroutines_1_10_2]: https://github.com/Kotlin/kotlinx.coroutines/releases/tag/1.10.2
+[coroutines_1_11_0]: https://github.com/Kotlin/kotlinx.coroutines/releases/tag/1.11.0
+[curl]: https://curl.se/
+[elf_alignment]: https://developer.android.com/guide/practices/page-sizes
+[graalvm]: https://www.graalvm.org/
+[graalvm_21]: https://www.graalvm.org/release-notes/21_0/
+[graalvm_22]: https://www.graalvm.org/release-notes/22_2/
+[graalvm_25]: https://www.graalvm.org/release-notes/JDK_25/
+[idna_15_1_0]: https://www.unicode.org/reports/tr46/#Modifications
+[kotlin_1_4_20]: https://github.com/JetBrains/kotlin/releases/tag/v1.4.20
+[kotlin_1_5_31]: https://github.com/JetBrains/kotlin/releases/tag/v1.5.31
+[kotlin_1_6_10]: https://github.com/JetBrains/kotlin/releases/tag/v1.6.10
+[kotlin_1_6_21]: https://github.com/JetBrains/kotlin/releases/tag/v1.6.21
+[kotlin_1_7_10]: https://github.com/JetBrains/kotlin/releases/tag/v1.7.10
+[kotlin_1_9_21]: https://github.com/JetBrains/kotlin/releases/tag/v1.9.21
+[kotlin_1_9_23]: https://github.com/JetBrains/kotlin/releases/tag/v1.9.23
+[kotlin_2_1_21]: https://github.com/JetBrains/kotlin/releases/tag/v2.1.21
+[kotlin_2_2_0]: https://github.com/JetBrains/kotlin/releases/tag/v2.2.0
+[kotlin_2_2_20]: https://github.com/JetBrains/kotlin/releases/tag/v2.2.20
+[kotlin_2_2_21]: https://github.com/JetBrains/kotlin/releases/tag/v2.2.21
+[loom]: https://docs.oracle.com/en/java/javase/21/core/virtual-threads.html
+[okio_2_9_0]: https://lysine.dev/okio/changelog/#version-290
+[okio_3_0_0]: https://lysine.dev/okio/changelog/#version-300
+[okio_3_12_0]: https://lysine.dev/okio/changelog/#version-3120
+[okio_3_13_0]: https://lysine.dev/okio/changelog/#version-3130
+[okio_3_15_0]: https://lysine.dev/okio/changelog/#version-3150
+[okio_3_16_0]: https://lysine.dev/okio/changelog/#version-3160
+[okio_3_16_1]: https://lysine.dev/okio/changelog/#version-3161
+[okio_3_16_2]: https://lysine.dev/okio/changelog/#version-3162
+[okio_3_16_3]: https://lysine.dev/okio/changelog/#version-3163
+[okio_3_16_4]: https://lysine.dev/okio/changelog/#version-3164
+[okio_3_17_0]: https://lysine.dev/okio/changelog/#version-3170
+[okio_3_1_0]: https://lysine.dev/okio/changelog/#version-310
+[okio_3_2_0]: https://lysine.dev/okio/changelog/#version-320
+[okio_3_7_0]: https://lysine.dev/okio/changelog/#version-370
+[okio_3_9_0]: https://lysine.dev/okio/changelog/#version-390
+[rfc_8305]: https://tools.ietf.org/html/rfc8305
+[startup_1_2_0]: https://developer.android.com/jetpack/androidx/releases/startup#1.2.0
+[uts46]: https://www.unicode.org/reports/tr46
+[zstd]: https://github.com/facebook/zstd
+[zstd_kmp_0_4_0]: https://github.com/square/zstd-kmp/blob/main/CHANGELOG.md#version-040

@@ -22,9 +22,10 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.logging.Logger
 
 /**
- * Default dispatcher that processes a script of responses. Populate the script by calling [enqueueResponse].
+ * Default dispatcher that processes a script of responses. Populate the script by calling
+ * [enqueue].
  */
-open class QueueDispatcher : Dispatcher() {
+public open class QueueDispatcher : Dispatcher() {
   protected val responseQueue: BlockingQueue<MockResponse> = LinkedBlockingQueue()
   private var failFastResponse: MockResponse? = null
 
@@ -34,7 +35,7 @@ open class QueueDispatcher : Dispatcher() {
     val requestLine = request.requestLine
     if (requestLine == "GET /favicon.ico HTTP/1.1") {
       logger.info("served $requestLine")
-      return MockResponse().setResponseCode(HttpURLConnection.HTTP_NOT_FOUND)
+      return MockResponse(code = HttpURLConnection.HTTP_NOT_FOUND)
     }
 
     if (failFastResponse != null && responseQueue.peek() == null) {
@@ -51,39 +52,40 @@ open class QueueDispatcher : Dispatcher() {
     return result
   }
 
-  override fun peek(): MockResponse {
-    return responseQueue.peek() ?: failFastResponse ?: super.peek()
-  }
+  public override fun peek(): MockResponse = responseQueue.peek() ?: failFastResponse ?: super.peek()
 
-  open fun enqueueResponse(response: MockResponse) {
+  public open fun enqueue(response: MockResponse) {
     responseQueue.add(response)
   }
 
-  override fun shutdown() {
+  public open fun clear() {
+    responseQueue.clear()
+  }
+
+  public override fun close() {
     responseQueue.add(DEAD_LETTER)
   }
 
-  open fun setFailFast(failFast: Boolean) {
-    val failFastResponse = if (failFast) {
-      MockResponse().setResponseCode(HttpURLConnection.HTTP_NOT_FOUND)
-    } else {
-      null
-    }
-    setFailFast(failFastResponse)
+  public open fun setFailFast(failFast: Boolean) {
+    setFailFast(
+      failFastResponse =
+        when {
+          failFast -> MockResponse(code = HttpURLConnection.HTTP_NOT_FOUND)
+          else -> null
+        },
+    )
   }
 
-  open fun setFailFast(failFastResponse: MockResponse?) {
+  public open fun setFailFast(failFastResponse: MockResponse?) {
     this.failFastResponse = failFastResponse
   }
 
-  companion object {
+  private companion object {
     /**
      * Enqueued on shutdown to release threads waiting on [dispatch]. Note that this response
      * isn't transmitted because the connection is closed before this response is returned.
      */
-    private val DEAD_LETTER = MockResponse().apply {
-      this.status = "HTTP/1.1 $HTTP_UNAVAILABLE shutting down"
-    }
+    private val DEAD_LETTER = MockResponse(code = HTTP_UNAVAILABLE)
 
     private val logger = Logger.getLogger(QueueDispatcher::class.java.name)
   }

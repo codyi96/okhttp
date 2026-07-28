@@ -13,18 +13,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+@file:Suppress(
+  "CANNOT_OVERRIDE_INVISIBLE_MEMBER",
+  "INVISIBLE_MEMBER",
+  "INVISIBLE_REFERENCE",
+)
+
 package okhttp3
 
-import java.net.InetAddress
+import android.annotation.SuppressLint
+import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
 import java.util.logging.Handler
 import java.util.logging.Level
 import java.util.logging.LogManager
 import java.util.logging.LogRecord
 import java.util.logging.Logger
+import okhttp3.OkHttpClientTestRule.Companion.plus
+import okhttp3.internal.buildConnectionPool
 import okhttp3.internal.concurrent.TaskRunner
+import okhttp3.internal.concurrent.withLock
+import okhttp3.internal.connection.RealConnectionPool
 import okhttp3.internal.http2.Http2
+import okhttp3.internal.taskRunnerInternal
 import okhttp3.testing.Flaky
+import okhttp3.testing.PlatformRule.Companion.LOOM_PROPERTY
+import okhttp3.testing.PlatformRule.Companion.getPlatformSystemProperty
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.extension.AfterEachCallback
@@ -38,13 +52,16 @@ import org.junit.jupiter.api.extension.ExtensionContext
  * Use [newClient] as a factory for a OkHttpClient instances. These instances are specifically
  * configured for testing.
  */
-class OkHttpClientTestRule : BeforeEachCallback, AfterEachCallback {
+class OkHttpClientTestRule :
+  BeforeEachCallback,
+  AfterEachCallback {
   private val clientEventsList = mutableListOf<String>()
   private var testClient: OkHttpClient? = null
   private var uncaughtException: Throwable? = null
   private lateinit var testName: String
   private var defaultUncaughtExceptionHandler: Thread.UncaughtExceptionHandler? = null
   private var taskQueuesWereIdle: Boolean = false
+  private val connectionListener = RecordingConnectionListener()
 
   var logger: Logger? = null
 
@@ -53,40 +70,60 @@ class OkHttpClientTestRule : BeforeEachCallback, AfterEachCallback {
   var recordFrames = false
   var recordSslDebug = false
 
-  private val sslExcludeFilter = "^(?:Inaccessible trust store|trustStore is|Reload the trust store|Reload trust certs|Reloaded|adding as trusted certificates|Ignore disabled cipher suite|Ignore unsupported cipher suite).*".toRegex()
+  private val sslExcludeFilter =
+    Regex(
+      buildString {
+        append("^(?:")
+        append(
+          listOf(
+            "Inaccessible trust store",
+            "trustStore is",
+            "Reload the trust store",
+            "Reload trust certs",
+            "Reloaded",
+            "adding as trusted certificates",
+            "Ignore disabled cipher suite",
+            "Ignore unsupported cipher suite",
+          ).joinToString(separator = "|"),
+        )
+        append(").*")
+      },
+    )
 
-  private val testLogHandler = object : Handler() {
-    override fun publish(record: LogRecord) {
-      val recorded = when (record.loggerName) {
-        TaskRunner::class.java.name -> recordTaskRunner
-        Http2::class.java.name -> recordFrames
-        "javax.net.ssl" -> recordSslDebug && !sslExcludeFilter.matches(record.message)
-        else -> false
-      }
+  private val testLogHandler =
+    object : Handler() {
+      override fun publish(record: LogRecord) {
+        val recorded =
+          when (record.loggerName) {
+            TaskRunner::class.java.name -> recordTaskRunner
+            Http2::class.java.name -> recordFrames
+            "javax.net.ssl" -> recordSslDebug && !sslExcludeFilter.matches(record.message)
+            else -> false
+          }
 
-      if (recorded) {
-        synchronized(clientEventsList) {
-          clientEventsList.add(record.message)
+        if (recorded) {
+          synchronized(clientEventsList) {
+            clientEventsList.add(record.message)
 
-          if (record.loggerName == "javax.net.ssl") {
-            val parameters = record.parameters
+            if (record.loggerName == "javax.net.ssl") {
+              val parameters = record.parameters
 
-            if (parameters != null) {
-              clientEventsList.add(parameters.first().toString())
+              if (parameters != null) {
+                clientEventsList.add(parameters.first().toString())
+              }
             }
           }
         }
       }
-    }
 
-    override fun flush() {
-    }
+      override fun flush() {
+      }
 
-    override fun close() {
+      override fun close() {
+      }
+    }.apply {
+      level = Level.FINEST
     }
-  }.apply {
-    level = Level.FINEST
-  }
 
   private fun applyLogger(fn: Logger.() -> Unit) {
     Logger.getLogger(OkHttpClient::class.java.`package`.name).fn()
@@ -97,10 +134,16 @@ class OkHttpClientTestRule : BeforeEachCallback, AfterEachCallback {
   }
 
   fun wrap(eventListener: EventListener) =
-    EventListener.Factory { ClientRuleEventListener(eventListener, ::addEvent) }
+    EventListener.Factory {
+      ClientRuleEventListener(::addEvent) + eventListener
+    }
+
+  fun wrap(eventRecorder: EventRecorder) = wrap(eventRecorder.eventListener)
 
   fun wrap(eventListenerFactory: EventListener.Factory) =
-    EventListener.Factory { call -> ClientRuleEventListener(eventListenerFactory.create(call), ::addEvent) }
+    EventListener.Factory { call ->
+      ClientRuleEventListener(::addEvent) + eventListenerFactory.create(call)
+    }
 
   /**
    * Returns an OkHttpClient for tests to use as a starting point.
@@ -114,18 +157,50 @@ class OkHttpClientTestRule : BeforeEachCallback, AfterEachCallback {
   fun newClient(): OkHttpClient {
     var client = testClient
     if (client == null) {
-      client = OkHttpClient.Builder()
+      client =
+        initialClientBuilder()
           .dns(SINGLE_INET_ADDRESS_DNS) // Prevent unexpected fallback addresses.
           .eventListenerFactory { ClientRuleEventListener(logger = ::addEvent) }
           .build()
+      connectionListener.forbidLock(RealConnectionPool.get(client.connectionPool))
+      connectionListener.forbidLock(client.dispatcher)
       testClient = client
     }
     return client
   }
 
-  fun newClientBuilder(): OkHttpClient.Builder {
-    return newClient().newBuilder()
+  private fun initialClientBuilder(): OkHttpClient.Builder =
+    if (isLoom()) {
+      val backend = TaskRunner.RealBackend(loomThreadFactory())
+      val taskRunner = TaskRunner(backend)
+
+      OkHttpClient
+        .Builder()
+        .connectionPool(
+          buildConnectionPool(
+            connectionListener = connectionListener,
+            taskRunner = taskRunner,
+          ),
+        ).dispatcher(Dispatcher(backend.executor))
+        .taskRunnerInternal(taskRunner)
+    } else {
+      OkHttpClient
+        .Builder()
+        .connectionPool(ConnectionPool(connectionListener = connectionListener))
+    }
+
+  private fun loomThreadFactory(): ThreadFactory {
+    val ofVirtual = Thread::class.java.getMethod("ofVirtual").invoke(null)
+
+    return Class
+      .forName("java.lang.Thread\$Builder")
+      .getMethod("factory")
+      .invoke(ofVirtual) as ThreadFactory
   }
+
+  private fun isLoom(): Boolean = getPlatformSystemProperty() == LOOM_PROPERTY
+
+  fun newClientBuilder(): OkHttpClient.Builder = newClient().newBuilder()
 
   @Synchronized private fun addEvent(event: String) {
     if (recordEvents) {
@@ -143,6 +218,10 @@ class OkHttpClientTestRule : BeforeEachCallback, AfterEachCallback {
     }
   }
 
+  @Synchronized fun takeUncaughtException(): Throwable? =
+    uncaughtException
+      .also { uncaughtException = null }
+
   fun ensureAllConnectionsReleased() {
     testClient?.let {
       val connectionPool = it.connectionPool
@@ -156,7 +235,10 @@ class OkHttpClientTestRule : BeforeEachCallback, AfterEachCallback {
         println("After delay: " + connectionPool.connectionCount())
       }
 
-      assertEquals(0, connectionPool.connectionCount())
+      connectionPool.evictAll()
+      assertEquals(0, connectionPool.connectionCount()) {
+        "Still ${connectionPool.connectionCount()} connections open"
+      }
     }
   }
 
@@ -168,7 +250,9 @@ class OkHttpClientTestRule : BeforeEachCallback, AfterEachCallback {
       // a test timeout failure.
       val waitTime = (entryTime + 1_000_000_000L - System.nanoTime())
       if (!queue.idleLatch().await(waitTime, TimeUnit.NANOSECONDS)) {
-        TaskRunner.INSTANCE.cancelAll()
+        TaskRunner.INSTANCE.withLock {
+          TaskRunner.INSTANCE.cancelAll()
+        }
         fail<Unit>("Queue still active after 1000 ms")
       }
     }
@@ -195,6 +279,7 @@ class OkHttpClientTestRule : BeforeEachCallback, AfterEachCallback {
     }
   }
 
+  @SuppressLint("NewApi")
   override fun afterEach(context: ExtensionContext) {
     val failure = context.executionException.orElseGet { null }
 
@@ -232,10 +317,10 @@ class OkHttpClientTestRule : BeforeEachCallback, AfterEachCallback {
     testClient?.dispatcher?.executorService?.shutdown()
   }
 
-  private fun ExtensionContext.isFlaky(): Boolean {
-    return (testMethod.orElseGet { null }?.isAnnotationPresent(Flaky::class.java) == true) ||
+  @SuppressLint("NewApi")
+  private fun ExtensionContext.isFlaky(): Boolean =
+    (testMethod.orElseGet { null }?.isAnnotationPresent(Flaky::class.java) == true) ||
       (testClass.orElseGet { null }?.isAnnotationPresent(Flaky::class.java) == true)
-  }
 
   @Synchronized private fun logEvents() {
     // Will be ineffective if test overrides the listener
@@ -248,17 +333,18 @@ class OkHttpClientTestRule : BeforeEachCallback, AfterEachCallback {
     }
   }
 
+  fun recordedConnectionEventTypes(): List<String> = connectionListener.recordedEventTypes()
+
   companion object {
     /**
      * A network that resolves only one IP address per host. Use this when testing route selection
      * fallbacks to prevent the host machine's various IP addresses from interfering.
      */
-    private val SINGLE_INET_ADDRESS_DNS = object : Dns {
-      override fun lookup(hostname: String): List<InetAddress> {
+    private val SINGLE_INET_ADDRESS_DNS =
+      Dns { hostname ->
         val addresses = Dns.SYSTEM.lookup(hostname)
-        return listOf(addresses[0])
+        listOf(addresses[0])
       }
-    }
 
     private operator fun Throwable?.plus(throwable: Throwable): Throwable {
       if (this != null) {

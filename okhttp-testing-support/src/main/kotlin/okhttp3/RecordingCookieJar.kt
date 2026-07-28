@@ -15,9 +15,10 @@
  */
 package okhttp3
 
+import assertk.assertThat
+import assertk.assertions.containsExactly
 import java.util.ArrayDeque
 import java.util.Deque
-import org.assertj.core.api.Assertions.assertThat
 
 class RecordingCookieJar : CookieJar {
   private val requestCookies: Deque<List<Cookie>> = ArrayDeque()
@@ -27,9 +28,7 @@ class RecordingCookieJar : CookieJar {
     requestCookies.add(cookies.toList())
   }
 
-  fun takeResponseCookies(): List<Cookie> {
-    return responseCookies.removeFirst()
-  }
+  fun takeResponseCookies(): List<Cookie> = responseCookies.removeFirst()
 
   fun assertResponseCookies(vararg cookies: String?) {
     assertThat(takeResponseCookies().map(Cookie::toString)).containsExactly(*cookies)
@@ -37,12 +36,10 @@ class RecordingCookieJar : CookieJar {
 
   override fun saveFromResponse(
     url: HttpUrl,
-    cookies: List<Cookie>
+    cookies: List<Cookie>,
   ) {
     responseCookies.add(cookies)
   }
 
-  override fun loadForRequest(url: HttpUrl): List<Cookie> {
-    return if (requestCookies.isEmpty()) emptyList() else requestCookies.removeFirst()
-  }
+  override fun loadForRequest(url: HttpUrl): List<Cookie> = if (requestCookies.isEmpty()) emptyList() else requestCookies.removeFirst()
 }

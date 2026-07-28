@@ -22,6 +22,7 @@ import java.net.Proxy
 import java.util.concurrent.TimeUnit
 import okhttp3.Call
 import okhttp3.Connection
+import okhttp3.Dispatcher
 import okhttp3.EventListener
 import okhttp3.Handshake
 import okhttp3.HttpUrl
@@ -38,7 +39,7 @@ import okhttp3.Response
  * slightly between releases. If you need a stable logging format, use your own event listener.
  */
 class LoggingEventListener private constructor(
-  private val logger: HttpLoggingInterceptor.Logger
+  private val logger: HttpLoggingInterceptor.Logger,
 ) : EventListener() {
   private var startNs: Long = 0
 
@@ -48,23 +49,55 @@ class LoggingEventListener private constructor(
     logWithTime("callStart: ${call.request()}")
   }
 
-  override fun proxySelectStart(call: Call, url: HttpUrl) {
+  override fun dispatcherQueueStart(
+    call: Call,
+    dispatcher: Dispatcher,
+  ) {
+    logWithTime("dispatcherQueueStart: $call queuedCallsCount=${dispatcher.queuedCallsCount()}")
+  }
+
+  override fun dispatcherQueueEnd(
+    call: Call,
+    dispatcher: Dispatcher,
+  ) {
+    logWithTime("dispatcherQueueEnd: $call queuedCallsCount=${dispatcher.queuedCallsCount()}")
+  }
+
+  override fun proxySelectStart(
+    call: Call,
+    url: HttpUrl,
+  ) {
     logWithTime("proxySelectStart: $url")
   }
 
-  override fun proxySelectEnd(call: Call, url: HttpUrl, proxies: List<Proxy>) {
+  override fun proxySelectEnd(
+    call: Call,
+    url: HttpUrl,
+    proxies: List<Proxy>,
+  ) {
     logWithTime("proxySelectEnd: $proxies")
   }
 
-  override fun dnsStart(call: Call, domainName: String) {
+  override fun dnsStart(
+    call: Call,
+    domainName: String,
+  ) {
     logWithTime("dnsStart: $domainName")
   }
 
-  override fun dnsEnd(call: Call, domainName: String, inetAddressList: List<InetAddress>) {
+  override fun dnsEnd(
+    call: Call,
+    domainName: String,
+    inetAddressList: List<InetAddress>,
+  ) {
     logWithTime("dnsEnd: $inetAddressList")
   }
 
-  override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) {
+  override fun connectStart(
+    call: Call,
+    inetSocketAddress: InetSocketAddress,
+    proxy: Proxy,
+  ) {
     logWithTime("connectStart: $inetSocketAddress $proxy")
   }
 
@@ -72,7 +105,10 @@ class LoggingEventListener private constructor(
     logWithTime("secureConnectStart")
   }
 
-  override fun secureConnectEnd(call: Call, handshake: Handshake?) {
+  override fun secureConnectEnd(
+    call: Call,
+    handshake: Handshake?,
+  ) {
     logWithTime("secureConnectEnd: $handshake")
   }
 
@@ -80,7 +116,7 @@ class LoggingEventListener private constructor(
     call: Call,
     inetSocketAddress: InetSocketAddress,
     proxy: Proxy,
-    protocol: Protocol?
+    protocol: Protocol?,
   ) {
     logWithTime("connectEnd: $protocol")
   }
@@ -90,16 +126,22 @@ class LoggingEventListener private constructor(
     inetSocketAddress: InetSocketAddress,
     proxy: Proxy,
     protocol: Protocol?,
-    ioe: IOException
+    ioe: IOException,
   ) {
     logWithTime("connectFailed: $protocol $ioe")
   }
 
-  override fun connectionAcquired(call: Call, connection: Connection) {
+  override fun connectionAcquired(
+    call: Call,
+    connection: Connection,
+  ) {
     logWithTime("connectionAcquired: $connection")
   }
 
-  override fun connectionReleased(call: Call, connection: Connection) {
+  override fun connectionReleased(
+    call: Call,
+    connection: Connection,
+  ) {
     logWithTime("connectionReleased")
   }
 
@@ -107,7 +149,10 @@ class LoggingEventListener private constructor(
     logWithTime("requestHeadersStart")
   }
 
-  override fun requestHeadersEnd(call: Call, request: Request) {
+  override fun requestHeadersEnd(
+    call: Call,
+    request: Request,
+  ) {
     logWithTime("requestHeadersEnd")
   }
 
@@ -115,11 +160,17 @@ class LoggingEventListener private constructor(
     logWithTime("requestBodyStart")
   }
 
-  override fun requestBodyEnd(call: Call, byteCount: Long) {
+  override fun requestBodyEnd(
+    call: Call,
+    byteCount: Long,
+  ) {
     logWithTime("requestBodyEnd: byteCount=$byteCount")
   }
 
-  override fun requestFailed(call: Call, ioe: IOException) {
+  override fun requestFailed(
+    call: Call,
+    ioe: IOException,
+  ) {
     logWithTime("requestFailed: $ioe")
   }
 
@@ -127,7 +178,10 @@ class LoggingEventListener private constructor(
     logWithTime("responseHeadersStart")
   }
 
-  override fun responseHeadersEnd(call: Call, response: Response) {
+  override fun responseHeadersEnd(
+    call: Call,
+    response: Response,
+  ) {
     logWithTime("responseHeadersEnd: $response")
   }
 
@@ -135,11 +189,17 @@ class LoggingEventListener private constructor(
     logWithTime("responseBodyStart")
   }
 
-  override fun responseBodyEnd(call: Call, byteCount: Long) {
+  override fun responseBodyEnd(
+    call: Call,
+    byteCount: Long,
+  ) {
     logWithTime("responseBodyEnd: byteCount=$byteCount")
   }
 
-  override fun responseFailed(call: Call, ioe: IOException) {
+  override fun responseFailed(
+    call: Call,
+    ioe: IOException,
+  ) {
     logWithTime("responseFailed: $ioe")
   }
 
@@ -147,7 +207,10 @@ class LoggingEventListener private constructor(
     logWithTime("callEnd")
   }
 
-  override fun callFailed(call: Call, ioe: IOException) {
+  override fun callFailed(
+    call: Call,
+    ioe: IOException,
+  ) {
     logWithTime("callFailed: $ioe")
   }
 
@@ -155,11 +218,17 @@ class LoggingEventListener private constructor(
     logWithTime("canceled")
   }
 
-  override fun satisfactionFailure(call: Call, response: Response) {
+  override fun satisfactionFailure(
+    call: Call,
+    response: Response,
+  ) {
     logWithTime("satisfactionFailure: $response")
   }
 
-  override fun cacheHit(call: Call, response: Response) {
+  override fun cacheHit(
+    call: Call,
+    response: Response,
+  ) {
     logWithTime("cacheHit: $response")
   }
 
@@ -167,7 +236,10 @@ class LoggingEventListener private constructor(
     logWithTime("cacheMiss")
   }
 
-  override fun cacheConditionalHit(call: Call, cachedResponse: Response) {
+  override fun cacheConditionalHit(
+    call: Call,
+    cachedResponse: Response,
+  ) {
     logWithTime("cacheConditionalHit: $cachedResponse")
   }
 
@@ -176,9 +248,13 @@ class LoggingEventListener private constructor(
     logger.log("[$timeMs ms] $message")
   }
 
-  open class Factory @JvmOverloads constructor(
-    private val logger: HttpLoggingInterceptor.Logger = HttpLoggingInterceptor.Logger.DEFAULT
-  ) : EventListener.Factory {
-    override fun create(call: Call): EventListener = LoggingEventListener(logger)
-  }
+  open class Factory
+    @JvmOverloads
+    constructor(
+      private val logger: HttpLoggingInterceptor.Logger = HttpLoggingInterceptor.Logger.DEFAULT,
+    ) : EventListener.Factory {
+      override fun create(call: Call): EventListener = LoggingEventListener(logger)
+    }
+
+  companion object
 }

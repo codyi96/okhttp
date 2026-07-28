@@ -13,13 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+@file:Suppress("Since15")
+
 package okhttp3.recipes.kt
 
 import java.io.IOException
 import java.security.KeyStore
 import java.security.SecureRandom
 import java.security.Security
-import java.util.Arrays
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.KeyStoreBuilderParameters
 import javax.net.ssl.SSLContext
@@ -47,7 +48,7 @@ import okhttp3.internal.platform.Platform
  * Install OpenSC separately. On a mac `brew cast install opensc`.
  */
 @SuppressSignatureCheck
-class YubikeyClientAuth() {
+class YubikeyClientAuth {
   fun run() {
     // The typical PKCS11 slot, may vary with different hardware.
     val slot = 0
@@ -61,12 +62,12 @@ class YubikeyClientAuth() {
 
     val callbackHandler = ConsoleCallbackHandler
 
-    val builderList: List<KeyStore.Builder> = Arrays.asList(
-        KeyStore.Builder.newInstance("PKCS11", null, KeyStore.CallbackHandlerProtection(callbackHandler))
-
+    val builderList: List<KeyStore.Builder> =
+      listOf(
+        KeyStore.Builder.newInstance("PKCS11", null, KeyStore.CallbackHandlerProtection(callbackHandler)),
         // Example if you want to combine multiple keystore types
         // KeyStore.Builder.newInstance("PKCS12", null, File("keystore.p12"), PasswordProtection("rosebud".toCharArray()))
-    )
+      )
 
     val keyManagerFactory = KeyManagerFactory.getInstance("NewSunX509")
     keyManagerFactory.init(KeyStoreBuilderParameters(builderList))
@@ -77,19 +78,23 @@ class YubikeyClientAuth() {
     val sslContext = SSLContext.getInstance("TLS")
     sslContext.init(arrayOf(keyManager), arrayOf(trustManager), SecureRandom())
 
-    val client = OkHttpClient.Builder()
+    val client =
+      OkHttpClient
+        .Builder()
         .sslSocketFactory(sslContext.socketFactory, trustManager)
         .build()
 
     // An example test URL that returns client certificate details.
-    val request = Request.Builder()
+    val request =
+      Request
+        .Builder()
         .url("https://prod.idrix.eu/secure/")
         .build()
 
     client.newCall(request).execute().use { response ->
       if (!response.isSuccessful) throw IOException("Unexpected code $response")
 
-      println(response.body!!.string())
+      println(response.body.string())
     }
   }
 }
@@ -104,7 +109,11 @@ object ConsoleCallbackHandler : CallbackHandler {
           callback.password = console.readPassword(callback.prompt)
         } else {
           System.err.println(callback.prompt)
-          callback.password = System.`in`.bufferedReader().readLine().toCharArray()
+          callback.password =
+            System.`in`
+              .bufferedReader()
+              .readLine()
+              .toCharArray()
         }
       } else {
         throw UnsupportedCallbackException(callback)
